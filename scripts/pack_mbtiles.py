@@ -15,7 +15,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-BBOX = (9.9, 46.6, 13.9, 50.6)  # lon_min, lat_min, lon_max, lat_max
+# lon_min,lat_min,lon_max,lat_max — override with BBOX="10.3,46.2,12.5,47.1"
+BBOX = tuple(float(v) for v in
+             os.environ.get("BBOX", "9.9,46.6,13.9,50.6").split(","))
 BASE = os.environ.get("TILE_BASE", "http://localhost:8280/tiles/cyclosm")
 MINZ = int(sys.argv[1]) if len(sys.argv) > 1 else 6
 MAXZ = int(sys.argv[2]) if len(sys.argv) > 2 else 13
