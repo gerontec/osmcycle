@@ -17,21 +17,26 @@ pyhgtmap -a "$BBOX_A" -s 10 --sources=view3 \
   --max-nodes-per-tile=0 --max-nodes-per-way=0 --pbf -j 8 -o contour_
 
 # --- 2. load contours into the `contours` PostGIS database -----------------
+# pyhgtmap tags contour ways with `ele=` (not `height`), so capture `ele`.
+sed -i 's/\bheight\b/ele/' contours.style
 sudo -u postgres createdb -O "$USER" contours 2>/dev/null || true
 sudo -u postgres psql -d contours -c "CREATE EXTENSION IF NOT EXISTS postgis;"
-osm2pgsql --slim -d contours --cache 4000 --style contours.style ./contour_*.osm.pbf
-# CyclOSM expects table `contours` with a `geometry` column (not planet_osm_line/way)
+osm2pgsql --slim -d contours --cache 4000 --number-processes "$(nproc)" \
+  --style contours.style ./contour_*.osm.pbf
+# CyclOSM expects table `contours`, geometry column `geometry`, height col `height`
 psql -d contours -c 'DROP TABLE IF EXISTS contours;
   ALTER TABLE planet_osm_line RENAME TO contours;
   ALTER TABLE contours RENAME COLUMN way TO geometry;
+  ALTER TABLE contours RENAME COLUMN ele TO height;
   CREATE INDEX ON contours USING gist (geometry);
   CREATE INDEX ON contours (height);
   GRANT SELECT ON contours TO "_renderd"; GRANT USAGE ON SCHEMA public TO "_renderd";'
 
 # --- 3. hillshade VRT from the downloaded .hgt tiles -----------------------
-gdalbuildvrt dem.vrt hgt/**/*.hgt
+find . -name '*.hgt' > hgt_list.txt          # pyhgtmap stores under hgt/VIEW3/
+gdalbuildvrt -input_file_list hgt_list.txt dem.vrt
 gdaldem hillshade -s 111120 -compute_edges -co compress=lzw dem.vrt hillshade.tif
-gdaldem color-relief hillshade.tif -alpha shade.ramp shade_rgba.tif -co compress=lzw
+gdaldem color-relief hillshade.tif shade.ramp shade_rgba.tif -alpha -co compress=lzw
 gdalbuildvrt shade.vrt shade_rgba.tif
 
 # --- 4. enable hillshade + contour layers in project.mml -------------------
