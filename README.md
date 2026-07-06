@@ -32,7 +32,9 @@ needed on the server; the phone only does OpenGL compositing in the app.
 | `scripts/make_land_shapefile.sh` | landlocked land-polygon (see below) |
 | `scripts/patch_project_mml.sh` | repoint coastline layers + compile `mapnik.xml` |
 | `scripts/seed.sh` | pre-render tiles z6–13 for the bbox |
-| `scripts/pack_mbtiles.py` | pack the bbox into an offline `.mbtiles` |
+| `scripts/build_dem.sh` | contour lines + hillshade → Höhenlinien in the tiles |
+| `scripts/pack_mbtiles.py` | pack a bbox into an offline `.mbtiles` (BBOX overridable) |
+| `scripts/mbtiles2osmand.py` | convert `.mbtiles` → OsmAnd `.sqlitedb` raster map |
 
 ## Quick start (server, Ubuntu 26.04 / Mapnik 4.2)
 
@@ -105,6 +107,24 @@ reasons — both of those are effectively dead on modern Python:
 - **Austria data:** Geofabrik does not split Austria into states, so all of
   Austria is downloaded and the west (Tirol/Vorarlberg) is clipped to the
   render bbox `9.9,46.6,13.9,50.6` before merging with Bayern.
+
+## Use the offline maps in OsmAnd
+
+Convert a pack and drop it into OsmAnd's tiles folder — it then appears under
+**Karte konfigurieren → Kartenquelle**:
+
+```bash
+python3 scripts/pack_mbtiles.py 6 15 alpen.mbtiles      # BBOX per region, seeded
+python3 scripts/mbtiles2osmand.py alpen.mbtiles CyclOSM_Alpen.sqlitedb
+adb push CyclOSM_Alpen.sqlitedb \
+  /storage/emulated/0/Android/Media/net.osmand/tiles/CyclOSM_Alpen.sqlitedb
+```
+
+Note: OsmAnd's data folder can be internal *or* `Android/media/net.osmand` —
+check **Einstellungen → OsmAnd Einstellungen → Datenordner** and drop the
+`.sqlitedb` into that folder's `tiles/` subdir. Requires the **Online-Karten**
+plugin enabled. Higher `maxzoom` = sharper (but bigger); z6–15 keeps it usable
+while staying reasonable in size.
 
 ## Attribution
 
