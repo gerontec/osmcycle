@@ -1,0 +1,24 @@
+# OSM data & rendered artifacts (large, regenerable)
+data/
+*.osm.pbf
+tiles_cache/
+style/mapnik.xml
+style/data/
+
+# buildozer / python-for-android
+app/.buildozer/
+app/bin/
+.buildozer/
+bin/
+
+# python
+venv/
+venv-buildozer/
+__pycache__/
+*.pyc
+
+# logs
+*.log
+
+# offline tile packs (large, regenerable)
+*.mbtiles

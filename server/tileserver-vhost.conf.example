@@ -1,0 +1,20 @@
+# Apache vhost that serves CyclOSM tiles via mod_tile on a dedicated port.
+# Copy to /etc/apache2/sites-available/tileserver.conf, then:
+#   sudo a2enmod tile
+#   sudo a2ensite tileserver
+#   sudo systemctl restart apache2   # full restart needed to bind the new port
+#
+# Runs on port 8280 to avoid clashing with other services on 80/443/8080/8088.
+# Tile URL:  http://<host>:8280/tiles/cyclosm/{z}/{x}/{y}.png
+
+Listen 8280
+<VirtualHost *:8280>
+    ServerName tileserver.local
+    LoadTileConfigFile /etc/renderd.conf
+    ModTileRenderdSocketName /run/renderd/renderd.sock
+    ModTileTileDir /var/cache/renderd/tiles
+    ModTileRequestTimeout 30
+    ModTileMissingRequestTimeout 60
+    ErrorLog ${APACHE_LOG_DIR}/tileserver_error.log
+    CustomLog ${APACHE_LOG_DIR}/tileserver_access.log combined
+</VirtualHost>
