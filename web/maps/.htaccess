@@ -1,0 +1,17 @@
+# CyclOSM map downloads
+Options +Indexes -MultiViews
+DirectoryIndex index.html
+
+# Serve map databases as binary downloads, not rendered
+AddType application/octet-stream .sqlitedb .mbtiles
+<IfModule mod_headers.c>
+  <FilesMatch "\.(sqlitedb|mbtiles)$">
+    Header set Content-Disposition "attachment"
+  </FilesMatch>
+</IfModule>
+
+# Do not let a parent phpBB/WordPress rewrite hijack this folder
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^ - [L]
+</IfModule>

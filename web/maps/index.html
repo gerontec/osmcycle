@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CyclOSM Offline-Karten für OsmAnd</title>
+<style>
+  :root{--bg:#f7f8f9;--fg:#1b1f23;--mut:#5a6673;--card:#fff;--bd:#e2e6ea;--acc:#2e7d32;--accfg:#fff}
+  @media (prefers-color-scheme:dark){:root{--bg:#14171a;--fg:#e8eaed;--mut:#9aa4af;--card:#1d2126;--bd:#2b3138;--acc:#4caf50;--accfg:#0a0d0f}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px 64px}
+  h1{font-size:1.7rem;margin:0 0 4px}
+  .sub{color:var(--mut);margin:0 0 28px}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px 18px;margin:12px 0;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .info{flex:1 1 220px;min-width:0}
+  .name{font-weight:600;word-break:break-word}
+  .meta{color:var(--mut);font-size:.87rem;margin-top:2px}
+  a.dl{background:var(--acc);color:var(--accfg);text-decoration:none;font-weight:600;padding:9px 18px;border-radius:8px;white-space:nowrap}
+  a.dl:hover{opacity:.9}
+  .note{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px 18px;margin-top:28px;font-size:.93rem}
+  code{background:rgba(128,128,128,.16);padding:1px 6px;border-radius:5px;font-size:.86em;word-break:break-all}
+  ol{margin:8px 0 0;padding-left:22px}
+  li{margin:4px 0}
+  footer{color:var(--mut);font-size:.82rem;margin-top:32px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🚲 CyclOSM Offline-Karten</h1>
+  <p class="sub">Raster-Karten für <strong>OsmAnd</strong> (Android/iOS) &nbsp;·&nbsp; Zoom 6–14 mit Höhenlinien</p>
+
+  <div class="card">
+    <div class="info">
+      <div class="name">CyclOSM_Alpen.sqlitedb</div>
+      <div class="meta">Bayern + Tirol + Südtirol + Kärnten (All-in-One) · 2,38 GB</div>
+    </div>
+    <a class="dl" href="CyclOSM_Alpen.sqlitedb">Download</a>
+  </div>
+
+  <div class="card">
+    <div class="info">
+      <div class="name">CyclOSM_Bayern-Tirol.sqlitedb</div>
+      <div class="meta">Bayern + Tirol · 329 MB</div>
+    </div>
+    <a class="dl" href="CyclOSM_Bayern-Tirol.sqlitedb">Download</a>
+  </div>
+
+  <div class="card">
+    <div class="info">
+      <div class="name">CyclOSM_Kaernten.sqlitedb</div>
+      <div class="meta">Kärnten · 36 MB</div>
+    </div>
+    <a class="dl" href="CyclOSM_Kaernten.sqlitedb">Download</a>
+  </div>
+
+  <div class="card">
+    <div class="info">
+      <div class="name">CyclOSM_Suedtirol.sqlitedb</div>
+      <div class="meta">Südtirol · 28 MB</div>
+    </div>
+    <a class="dl" href="CyclOSM_Suedtirol.sqlitedb">Download</a>
+  </div>
+
+  <div class="note">
+    <strong>Installation in OsmAnd</strong>
+    <ol>
+      <li>Datei herunterladen und in den Ordner<br><code>Android/data/net.osmand/files/tiles/</code> kopieren.</li>
+      <li>OsmAnd öffnen → <em>Karte konfigurieren</em> → <em>Kartenquelle</em> → gewünschte Karte wählen.</li>
+      <li>Optional als Overlay/Underlay unter <em>Kartenebenen</em> einblendbar.</li>
+    </ol>
+  </div>
+
+  <footer>CyclOSM-Style · Daten © OpenStreetMap-Mitwirkende (ODbL)</footer>
+</div>
+</body>
+</html>
