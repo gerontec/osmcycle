@@ -75,6 +75,7 @@ class OSMCycleApp(App):
 
         self.recorder = TrackRecorder()
         self.last_lat = self.last_lon = None
+        self._centered = False
 
         self.status = Label(text="GPS: warte…", size_hint=(None, None),
                             size=(360, 44), pos_hint={"x": 0.01, "top": 0.99},
@@ -129,6 +130,33 @@ class OSMCycleApp(App):
             self.status.text = "GPS: aktiv"
         except Exception as e:
             self.status.text = f"GPS n/v ({e})"
+        # show the arrow immediately from the last known fix (also works indoors)
+        self._show_last_known()
+
+    def _read_location(self):
+        """Current fix straight from Android LocationManager. Works even when the
+        plyer on_location callback never fires. Returns (lat, lon, ele, bearing)
+        or None."""
+        try:
+            from jnius import autoclass
+            Context = autoclass("android.content.Context")
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            lm = PythonActivity.mActivity.getSystemService(Context.LOCATION_SERVICE)
+            loc = (lm.getLastKnownLocation("gps")
+                   or lm.getLastKnownLocation("fused")
+                   or lm.getLastKnownLocation("network"))
+            if loc:
+                return (loc.getLatitude(), loc.getLongitude(),
+                        loc.getAltitude() if loc.hasAltitude() else None,
+                        loc.getBearing() if loc.hasBearing() else None)
+        except Exception:
+            pass
+        return None
+
+    def _show_last_known(self):
+        fix = self._read_location()
+        if fix:
+            self._update(*fix)
 
     def on_location(self, **kwargs):
         lat, lon = kwargs.get("lat"), kwargs.get("lon")
@@ -141,12 +169,24 @@ class OSMCycleApp(App):
     def _update(self, lat, lon, ele, bearing):
         self.last_lat, self.last_lon = lat, lon
         self.pos_layer.set_position(lat, lon, bearing)
-        if self.recorder.recording:
-            self.recorder.add(lat, lon, ele)
-            self.track_layer.add_point(lat, lon)
-            self.status.text = f"REC · {len(self.recorder.points)} Punkte"
-        else:
+        if not self._centered:            # centre once so the arrow is on-screen
+            self._centered = True
+            self.mapview.center_on(lat, lon)
+        if not self.recorder.recording:
             self.status.text = f"GPS: {lat:.5f}, {lon:.5f}"
+
+    def _rec_tick(self, dt):
+        """Every 10 s while recording: sample the position via LocationManager,
+        log it and drop a dot on the map — visible proof recording works."""
+        fix = self._read_location()
+        if not fix:
+            self.status.text = "REC · warte auf GPS…"
+            return
+        lat, lon, ele, bearing = fix
+        self._update(lat, lon, ele, bearing)      # keep the arrow fresh
+        self.recorder.add(lat, lon, ele)
+        self.track_layer.add_point(lat, lon)      # draws the line + a dot
+        self.status.text = f"REC · {len(self.recorder.points)} Punkte"
 
     def center_on_me(self, *_):
         if self.last_lat is not None:
@@ -159,7 +199,12 @@ class OSMCycleApp(App):
             self.track_layer.clear()
             self.rec_btn.text = "■ STOP"
             self.status.text = "REC gestartet"
+            self._rec_ev = Clock.schedule_interval(self._rec_tick, 10)
+            self._rec_tick(0)                     # drop the first dot immediately
         else:
+            if getattr(self, "_rec_ev", None):
+                self._rec_ev.cancel()
+                self._rec_ev = None
             path = self.recorder.stop_and_save()
             self.rec_btn.text = "● REC"
             self.status.text = (f"GPX: {os.path.basename(path)}" if path

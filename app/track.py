@@ -40,7 +40,7 @@ class TrackLayer(MapLayer):
     def reposition(self, *args):
         mapview = self.parent
         self.canvas.clear()
-        if not mapview or len(self.points) < 2:
+        if not mapview or not self.points:
             return
         coords = []
         for lat, lon in self.points:
@@ -48,7 +48,12 @@ class TrackLayer(MapLayer):
             coords += [x, y]
         with self.canvas:
             Color(0.85, 0.1, 0.1, 0.9)
-            Line(points=coords, width=2.2)
+            if len(coords) >= 4:
+                Line(points=coords, width=2.2)
+            # one dot per recorded fix (10 s sample) as a live success-check
+            r = 6
+            for i in range(0, len(coords), 2):
+                Ellipse(pos=(coords[i] - r, coords[i + 1] - r), size=(2 * r, 2 * r))
 
 
 class PositionLayer(MapLayer):
@@ -89,8 +94,17 @@ class WanderwegeLayer(MapLayer):
 
     def __init__(self, features, **kwargs):
         super().__init__(**kwargs)
-        self.features = features   # [{"trail":..., "points":[[lon,lat],...]}]
         self.visible = False
+        self.features = []          # precompute each feature's lon/lat bbox
+        for f in features:
+            pts = f.get("points") or []
+            if len(pts) < 2:
+                continue
+            lons = [p[0] for p in pts]
+            lats = [p[1] for p in pts]
+            self.features.append({
+                "trail": f["trail"], "points": pts,
+                "bb": (min(lons), min(lats), max(lons), max(lats))})
 
     def set_visible(self, on):
         self.visible = on
@@ -101,8 +115,19 @@ class WanderwegeLayer(MapLayer):
         self.canvas.clear()
         if not mapview or not self.visible:
             return
+        try:                        # visible viewport in lon/lat (+ margin)
+            bb = mapview.get_bbox()
+            vlatmin, vlatmax = min(bb[0], bb[2]), max(bb[0], bb[2])
+            vlonmin, vlonmax = min(bb[1], bb[3]), max(bb[1], bb[3])
+        except Exception:
+            vlatmin = vlonmin = -1e9
+            vlatmax = vlonmax = 1e9
         with self.canvas:
             for feat in self.features:
+                blon0, blat0, blon1, blat1 = feat["bb"]
+                if (blon1 < vlonmin or blon0 > vlonmax or
+                        blat1 < vlatmin or blat0 > vlatmax):
+                    continue        # feature fully off-screen -> skip
                 r, g, b = self.COLORS.get(feat["trail"], (0.5, 0.5, 0.5))
                 Color(r, g, b, 0.9)
                 coords = []
