@@ -43,7 +43,9 @@ def main():
         "INSERT INTO info (tilenumbering, minzoom, maxzoom, ellipsoid, "
         "inverted_y, timecolumn, expireminutes, tilesize) VALUES "
         "(?, ?, ?, 0, 0, 'no', 0, 256)",
-        ("BigPlanet" if NUMBERING == "bigplanet" else "simple", minzoom, maxzoom),
+        ("BigPlanet" if NUMBERING == "bigplanet" else "simple",
+         (17 - maxzoom) if NUMBERING == "bigplanet" else minzoom,
+         (17 - minzoom) if NUMBERING == "bigplanet" else maxzoom),
     )
 
     n = 0
