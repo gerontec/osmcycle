@@ -258,7 +258,7 @@ class PeaksLayer(MapLayer):
     def _texture(self, name):
         tex = self._tex.get(name)
         if tex is None:
-            lbl = CoreLabel(text=name, font_size=13)
+            lbl = CoreLabel(text=name, font_size=26)
             lbl.refresh()
             tex = lbl.texture
             self._tex[name] = tex

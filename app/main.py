@@ -111,19 +111,20 @@ class OSMCycleApp(App):
         self._centered = False
 
         self.status = Label(text="GPS: warte…", size_hint=(None, None),
-                            size=(360, 44), pos_hint={"x": 0.01, "top": 0.99},
-                            color=(0, 0, 0, 1), halign="left")
+                            size=(560, 60), pos_hint={"x": 0.01, "top": 0.99},
+                            color=(0, 0, 0, 1), halign="left", font_size="30sp")
         root.add_widget(self.status)
 
         # REC (bottom-left)
         self.rec_btn = ToggleButton(text="● REC", size_hint=(None, None),
-                                    size=(150, 60), pos_hint={"x": 0.02, "y": 0.03})
+                                    size=(210, 90), pos_hint={"x": 0.02, "y": 0.03},
+                                    font_size="30sp")
         self.rec_btn.bind(on_press=self.toggle_record)
         root.add_widget(self.rec_btn)
 
         # Layer menu (top-right) — multi-select overlay chooser
-        layer_btn = Button(text="≡ Layer", size_hint=(None, None), size=(160, 60),
-                           pos_hint={"right": 0.98, "top": 0.99})
+        layer_btn = Button(text="≡ Layer", size_hint=(None, None), size=(220, 90),
+                           pos_hint={"right": 0.98, "top": 0.99}, font_size="30sp")
         layer_btn.bind(on_release=self.open_layers)
         root.add_widget(layer_btn)
 
@@ -142,12 +143,13 @@ class OSMCycleApp(App):
                         size_hint_y=None)
         box.bind(minimum_height=box.setter("height"))
         for src in self.gpx_layer.sources():
-            tb = ToggleButton(text=src, size_hint_y=None, height=64,
+            tb = ToggleButton(text=src, size_hint_y=None, height=96, font_size="28sp",
                               state="down" if src in self.gpx_layer.enabled else "normal")
             tb.bind(on_release=lambda b, s=src:
                     self.gpx_layer.set_enabled(s, b.state == "down"))
             box.add_widget(tb)
-        pk = ToggleButton(text="\U0001F53A Gipfelnamen", size_hint_y=None, height=64,
+        pk = ToggleButton(text="\U0001F53A Gipfelnamen", size_hint_y=None, height=96,
+                          font_size="28sp",
                           state="down" if self.peaks_layer.visible else "normal")
         pk.bind(on_release=lambda b: self.peaks_layer.set_visible(b.state == "down"))
         box.add_widget(pk)
