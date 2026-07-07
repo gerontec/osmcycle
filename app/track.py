@@ -5,7 +5,9 @@ import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-from kivy.graphics import Color, Line, Ellipse, Triangle, PushMatrix, PopMatrix, Rotate
+from kivy.core.text import Label as CoreLabel
+from kivy.graphics import (Color, Line, Ellipse, Triangle, Rectangle,
+                           PushMatrix, PopMatrix, Rotate)
 from kivy_garden.mapview import MapLayer
 
 
@@ -113,8 +115,8 @@ class GpxLayer(MapLayer):
 
     def __init__(self, dirs, **kwargs):
         super().__init__(**kwargs)
-        self.visible = False
-        self.segments = []          # {"points":[(lat,lon)], "bb":(la0,lo0,la1,lo1), "color"}
+        self.enabled = set()        # names of tracks currently shown (multi-select)
+        self.segments = []          # {"points","bb","color","src"}
         if isinstance(dirs, str):
             dirs = [dirs]
         for d in dirs:
@@ -135,12 +137,16 @@ class GpxLayer(MapLayer):
 
     def _load(self, path):
         root = ET.parse(path).getroot()
+        base = os.path.splitext(os.path.basename(path))[0]
         for trk in root:
             if not trk.tag.endswith("trk"):
                 continue
             color = self.DEFAULT_COLOR
+            name = base
             for child in trk:
-                if child.tag.endswith("extensions"):
+                if child.tag.endswith("name") and child.text:
+                    name = child.text
+                elif child.tag.endswith("extensions"):
                     for c in child.iter():
                         if c.tag.endswith("color") and c.text:
                             color = self._hex_rgba(c.text)
@@ -158,17 +164,25 @@ class GpxLayer(MapLayer):
                     lats = [p[0] for p in pts]
                     lons = [p[1] for p in pts]
                     self.segments.append({
-                        "points": pts, "color": color,
+                        "points": pts, "color": color, "src": name,
                         "bb": (min(lats), min(lons), max(lats), max(lons))})
 
-    def set_visible(self, on):
-        self.visible = on
+    def sources(self):
+        """Distinct track names, in load order (for the layer menu)."""
+        seen = []
+        for s in self.segments:
+            if s["src"] not in seen:
+                seen.append(s["src"])
+        return seen
+
+    def set_enabled(self, src, on):
+        self.enabled.add(src) if on else self.enabled.discard(src)
         self.reposition()
 
     def reposition(self, *args):
         mapview = self.parent
         self.canvas.clear()
-        if not mapview or not self.visible:
+        if not mapview or not self.enabled:
             return
         if int(mapview.zoom) < self.MIN_ZOOM:
             return                       # zoomed out: overview adds nothing but lag
@@ -185,6 +199,8 @@ class GpxLayer(MapLayer):
         d = self.DECIMATE_PX
         with self.canvas:
             for seg in self.segments:
+                if seg["src"] not in self.enabled:
+                    continue             # track not selected -> skip
                 la0, lo0, la1, lo1 = seg["bb"]
                 if (la1 < vlatmin or la0 > vlatmax or
                         lo1 < vlonmin or lo0 > vlonmax):
@@ -199,6 +215,91 @@ class GpxLayer(MapLayer):
                 if len(coords) >= 4:
                     Color(*seg["color"])
                     Line(points=coords, width=2.2, joint="round", cap="round")
+
+
+class PeaksLayer(MapLayer):
+    """Named-summit overlay from GPX <wpt> ('Gipfelnamen'). Only near the active
+    window and only when zoomed in, with a per-frame label cap + texture cache,
+    so tens of thousands of peaks stay smooth."""
+    MIN_ZOOM = 13
+    MAX_LABELS = 80
+
+    def __init__(self, dirs, **kwargs):
+        super().__init__(**kwargs)
+        self.visible = False
+        self.peaks = []            # (lat, lon, name)
+        self._tex = {}             # name -> Texture (lazy cache)
+        if isinstance(dirs, str):
+            dirs = [dirs]
+        for d in dirs:
+            for path in sorted(glob.glob(os.path.join(d or "", "*.gpx"))):
+                try:
+                    self._load(path)
+                except Exception:
+                    pass
+
+    def _load(self, path):
+        for wpt in ET.parse(path).getroot():
+            if not wpt.tag.endswith("wpt"):
+                continue
+            try:
+                lat = float(wpt.get("lat"))
+                lon = float(wpt.get("lon"))
+            except (TypeError, ValueError):
+                continue
+            name = ""
+            for c in wpt:
+                if c.tag.endswith("name") and c.text:
+                    name = c.text
+                    break
+            if name:
+                self.peaks.append((lat, lon, name))
+
+    def _texture(self, name):
+        tex = self._tex.get(name)
+        if tex is None:
+            lbl = CoreLabel(text=name, font_size=13)
+            lbl.refresh()
+            tex = lbl.texture
+            self._tex[name] = tex
+        return tex
+
+    def set_visible(self, on):
+        self.visible = on
+        self.reposition()
+
+    def reposition(self, *args):
+        mapview = self.parent
+        self.canvas.clear()
+        if not mapview or not self.visible:
+            return
+        if int(mapview.zoom) < self.MIN_ZOOM:
+            return
+        try:
+            bb = mapview.get_bbox()
+            vlatmin, vlatmax = min(bb[0], bb[2]), max(bb[0], bb[2])
+            vlonmin, vlonmax = min(bb[1], bb[3]), max(bb[1], bb[3])
+        except Exception:
+            return
+        zoom = mapview.zoom
+        drawn = 0
+        with self.canvas:
+            for lat, lon, name in self.peaks:
+                if not (vlatmin <= lat <= vlatmax and vlonmin <= lon <= vlonmax):
+                    continue
+                x, y = mapview.get_window_xy_from(lat, lon, zoom)
+                Color(0.35, 0.20, 0.05, 1)                 # brown summit marker
+                Triangle(points=[x, y + 7, x - 6, y - 5, x + 6, y - 5])
+                tex = self._texture(name)
+                if tex:
+                    w, h = tex.size
+                    Color(1, 1, 1, 0.7)                    # readability halo
+                    Rectangle(pos=(x + 7, y - 1), size=(w + 2, h))
+                    Color(0.15, 0.10, 0.05, 1)             # dark text
+                    Rectangle(texture=tex, pos=(x + 8, y - 1), size=(w, h))
+                drawn += 1
+                if drawn >= self.MAX_LABELS:
+                    break
 
 
 class TrackRecorder:

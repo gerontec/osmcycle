@@ -12,14 +12,18 @@ import shutil
 
 from kivy.app import App
 from kivy.clock import Clock
+from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.label import Label
+from kivy.uix.popup import Popup
+from kivy.uix.scrollview import ScrollView
 from kivy.uix.togglebutton import ToggleButton
 from kivy_garden.mapview import MapView, MapSource
 
 from hybridsource import HybridMapSource
-from track import TrackLayer, TrackRecorder, PositionLayer, GpxLayer, gpx_dir
+from track import (TrackLayer, TrackRecorder, PositionLayer, GpxLayer,
+                   PeaksLayer, gpx_dir)
 
 MBTILES_NAME = "alpen.mbtiles"
 ONLINE_URL = "http://[2a02:810d:4117:7300:ce96:e5ff:fe01:e09c]:8280/tiles/cyclosm/{z}/{x}/{y}.png"
@@ -97,6 +101,8 @@ class OSMCycleApp(App):
         seed_gpx()
         self.gpx_layer = GpxLayer([gpx_dir()])
         self.mapview.add_layer(self.gpx_layer)
+        self.peaks_layer = PeaksLayer([gpx_dir()])
+        self.mapview.add_layer(self.peaks_layer)
         self.pos_layer = PositionLayer()
         self.mapview.add_layer(self.pos_layer)
 
@@ -115,12 +121,11 @@ class OSMCycleApp(App):
         self.rec_btn.bind(on_press=self.toggle_record)
         root.add_widget(self.rec_btn)
 
-        # GPX overlay toggle (top-right)
-        self.gpx_btn = ToggleButton(text="GPX", size_hint=(None, None), size=(150, 60),
-                                    pos_hint={"right": 0.98, "top": 0.99})
-        self.gpx_btn.bind(
-            on_release=lambda b: self.gpx_layer.set_visible(b.state == "down"))
-        root.add_widget(self.gpx_btn)
+        # Layer menu (top-right) — multi-select overlay chooser
+        layer_btn = Button(text="≡ Layer", size_hint=(None, None), size=(160, 60),
+                           pos_hint={"right": 0.98, "top": 0.99})
+        layer_btn.bind(on_release=self.open_layers)
+        root.add_widget(layer_btn)
 
         # Centre-on-me (bottom-right, circle symbol)
         self.center_btn = Button(text="◎", font_size=42, size_hint=(None, None),
@@ -130,6 +135,25 @@ class OSMCycleApp(App):
 
         Clock.schedule_once(lambda dt: self.start_gps(), 1)
         return root
+
+    # --- layer menu (multi-select) ---------------------------------------
+    def open_layers(self, *_):
+        box = BoxLayout(orientation="vertical", spacing=6, padding=10,
+                        size_hint_y=None)
+        box.bind(minimum_height=box.setter("height"))
+        for src in self.gpx_layer.sources():
+            tb = ToggleButton(text=src, size_hint_y=None, height=64,
+                              state="down" if src in self.gpx_layer.enabled else "normal")
+            tb.bind(on_release=lambda b, s=src:
+                    self.gpx_layer.set_enabled(s, b.state == "down"))
+            box.add_widget(tb)
+        pk = ToggleButton(text="\U0001F53A Gipfelnamen", size_hint_y=None, height=64,
+                          state="down" if self.peaks_layer.visible else "normal")
+        pk.bind(on_release=lambda b: self.peaks_layer.set_visible(b.state == "down"))
+        box.add_widget(pk)
+        sv = ScrollView()
+        sv.add_widget(box)
+        Popup(title="Layer anzeigen", content=sv, size_hint=(0.85, 0.7)).open()
 
     # --- GPS -------------------------------------------------------------
     def start_gps(self):
