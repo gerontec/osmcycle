@@ -1,152 +1,151 @@
-# OSMCycle — CyclOSM cycling app for Bayern + Tirol + Südtirol + Kärnten
+# OSMCycle — CyclOSM cycling stack for Bayern + Tirol + Südtirol + Kärnten
 
-A self-hosted [CyclOSM](https://www.cyclosm.org/) raster tile server (with
-**contour lines + hillshade + MTB scale**, like osm.org's `layers=Y`) plus a
-small [Kivy](https://kivy.org/) Android app that shows it and **records GPS
-tracks as GPX**. Coverage: **Bayern, Tirol, Südtirol and Kärnten**.
+A self-hosted [CyclOSM](https://www.cyclosm.org/) raster tile server **with
+contour lines, hillshade and MTB-scale colouring** (like openstreetmap.org's
+`layers=Y`), plus a small [Kivy](https://kivy.org/) Android app that shows it,
+**records GPS tracks as GPX**, and can overlay three long-distance hiking
+trails. Coverage: **Bayern, Tirol, Südtirol and Kärnten**.
 
 ```
-OSM data (Geofabrik)  ─▶  PostGIS (osm2pgsql)  ─▶  Mapnik / CyclOSM CartoCSS
-                                                        │
-                                             renderd + Apache mod_tile
-                                                        │
-                                   http://<host>:8280/tiles/cyclosm/{z}/{x}/{y}.png
-                                                        │
-                                          Kivy app (kivy_garden.mapview)
+OSM (Geofabrik) ─▶ PostGIS (osm2pgsql) ─┐
+DEM (viewfinderpanoramas via pyhgtmap) ─┼▶ Mapnik / CyclOSM CartoCSS
+  → contours DB + hillshade VRT          │        │
+                                 renderd + Apache mod_tile  (IPv4 + IPv6, :8280)
+                                          │
+        http(s)://<host>:8280/tiles/cyclosm/{z}/{x}/{y}.png        (base map)
+        http(s)://<host>:8280/tiles/wanderwege/{z}/{x}/{y}.png     (trail overlay)
+                                          │
+                   Kivy app  (offline MBTiles + on-demand Nachladen)
 ```
 
-The tile pipeline is **CPU-bound** (Mapnik/Cairo). No GPU/CUDA is used or
-needed on the server; the phone only does OpenGL compositing in the app.
+Rendering is **CPU-bound** (Mapnik/Cairo) — no GPU/CUDA used or needed on the
+server; the phone only does OpenGL compositing.
 
 ## Repository layout
 
 | Path | What |
 |------|------|
-| `app/main.py` | Kivy app: MapView + position + REC button |
-| `app/hybridsource.py` | tile source: MBTiles offline, network fallback |
-| `app/track.py` | GPS track recorder → GPX + on-map track line |
+| `app/main.py` | Kivy app: map, position arrow, centre button, REC, layer menu |
+| `app/hybridsource.py` | tile source: offline MBTiles first, network on miss |
+| `app/track.py` | GPX recorder + track/position/Wanderwege map layers |
+| `app/wanderwege.json` | 3 hiking trails, simplified, bundled for the layer menu |
 | `app/buildozer.spec` | buildozer config → debug APK |
 | `style/` | git submodule → `cyclosm/cyclosm-cartocss-style` |
-| `server/renderd.conf.example` | renderd config (Mapnik 4.2 plugin path, `cyclosm` map) |
-| `server/tileserver-vhost.conf.example` | Apache mod_tile vhost on port **8280** |
+| `server/renderd.conf.example` | renderd config (Mapnik 4.2 plugin path, maps) |
+| `server/tileserver-vhost.conf.example` | Apache mod_tile vhost, port **8280** |
+| `server/wanderwege.xml` | Mapnik overlay style for the 3 trails |
 | `scripts/setup_tileserver.sh` | one-shot server bring-up |
 | `scripts/import_osm.sh` | download + merge + `osm2pgsql` import |
-| `scripts/make_land_shapefile.sh` | landlocked land-polygon (see below) |
+| `scripts/make_land_shapefile.sh` | landlocked land-polygon substitute |
 | `scripts/patch_project_mml.sh` | repoint coastline layers + compile `mapnik.xml` |
-| `scripts/seed.sh` | pre-render tiles z6–13 for the bbox |
-| `scripts/build_dem.sh` | contour lines + hillshade → Höhenlinien in the tiles |
-| `scripts/pack_mbtiles.py` | pack a bbox into an offline `.mbtiles` (BBOX overridable) |
-| `scripts/mbtiles2osmand.py` | convert `.mbtiles` → OsmAnd `.sqlitedb` raster map |
+| `scripts/build_dem.sh` | **contours + hillshade → Höhenlinien in the tiles** |
+| `scripts/build_wanderwege.sh` + `tirol_route.sql` | build the trail overlay |
+| `scripts/seed.sh` | pre-render a bbox |
+| `scripts/pack_mbtiles.py` / `pack_alpen.py` | pack bbox(es) → offline `.mbtiles` |
+| `scripts/mbtiles2osmand.py` | convert `.mbtiles` → OsmAnd `.sqlitedb` |
 
-## Quick start (server, Ubuntu 26.04 / Mapnik 4.2)
+## Server bring-up (Ubuntu 26.04 / Mapnik 4.2)
 
 ```bash
 git clone --recursive https://github.com/gerontec/osmcycle ~/python/osmcycle
-cd ~/python/osmcycle
-git submodule update --init          # if you forgot --recursive
-bash scripts/setup_tileserver.sh     # packages, DB, import, renderd, apache
-bash scripts/seed.sh 6 13            # optional: warm the cache
-curl -o /tmp/t.png http://localhost:8280/tiles/cyclosm/12/2179/1418.png
+cd ~/python/osmcycle && git submodule update --init
+bash scripts/setup_tileserver.sh    # packages, DB, import, land polygon, renderd, apache
+bash scripts/build_dem.sh           # Höhenlinien + Hillshade (pyhgtmap + gdaldem)
+bash scripts/build_wanderwege.sh    # trail overlay at /tiles/wanderwege/
+curl -o /tmp/t.png http://localhost:8280/tiles/cyclosm/17/69749/45644.png
 ```
 
-## Offline pack + app
+The tile vhost's `Listen 8280` is dual-stack, so tiles are served over **IPv6**
+too (`http://[<global-v6>]:8280/…`). For access away from home you need an
+inbound IPv6 firewall rule on the router and, since the prefix is dynamic, a
+DNS **AAAA** name (the IPv6 literal breaks when the prefix rotates).
 
-The app is **offline-first**. Bayern + Tirol ships as an MBTiles pack that the
-app reads locally (no network), while higher zooms / neighbouring tiles are
-pulled from the server on demand and disk-cached — like a normal slippy map
-(`app/hybridsource.py`).
+## The Android app
 
-1. **Build the offline pack** (server, after `seed.sh`):
+Offline-first: it reads a combined **`alpen.mbtiles`** (all four regions,
+z6–14, with Höhenlinien) locally, and pulls higher zooms / neighbouring tiles
+from the server on demand (`hybridsource.py`). Features:
 
-   ```bash
-   pip install requests
-   python3 scripts/pack_mbtiles.py 6 13 bayern-tirol.mbtiles   # ~hundreds of MB
-   ```
+- CyclOSM base with **Höhenlinien + Hillshade + MTB-Skala**.
+- **Position arrow** that rotates to the GPS heading + **◎ centre-on-me** button
+  (shows the last known fix immediately, auto-centres on the first live fix).
+- **● REC** GPS track recording → **GPX 1.1** in
+  `…/Android/data/org.gerontec.osmcycle/files/tracks/track_<ts>.gpx`.
+- **≡ Layer** menu toggles the 3 hiking trails (🔴 Karnischer, 🔵 Maximilians,
+  🟢 Tiroler Höhenweg), drawn client-side from `wanderwege.json` (offline,
+  viewport-culled).
 
-2. **Build the APK**:
+Build + install:
 
-   ```bash
-   cd app
-   python3.11 -m venv ../venv-buildozer && source ../venv-buildozer/bin/activate
-   pip install "cython<3.1" buildozer
-   export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64   # p4a needs JDK 17
-   buildozer -v android debug
-   ```
+```bash
+cd app
+python3.11 -m venv ../venv-buildozer && source ../venv-buildozer/bin/activate
+pip install "cython<3.1" buildozer
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64      # p4a needs JDK 17
+buildozer -v android debug                              # p4a.branch = release-2024.01.21
+adb install -r bin/osmcycle-0.1-arm64-v8a-debug.apk
+adb push alpen.mbtiles \
+  /sdcard/Android/data/org.gerontec.osmcycle/files/alpen.mbtiles
+```
 
-3. **Sideload to the device** (USB adb):
+Set `ONLINE_URL` in `app/main.py` to a host the phone can reach (LAN IPv4, or
+the server's IPv6 / a DNS AAAA name for mobile use).
 
-   ```bash
-   adb install -r bin/osmcycle-0.1-debug.apk
-   adb shell mkdir -p /sdcard/Android/data/org.gerontec.osmcycle/files
-   adb push bayern-tirol.mbtiles \
-     /sdcard/Android/data/org.gerontec.osmcycle/files/bayern-tirol.mbtiles
-   ```
+## The 3 hiking trails (Wanderwege overlay)
 
-The app looks for `bayern-tirol.mbtiles` in its external files dir (no runtime
-permission needed), then `/sdcard/osmcycle/`. Set `ONLINE_URL` in
-`app/main.py` to a host the phone can reach (LAN/VPN) for on-demand loading.
+- **Karnischer Höhenweg** and **Maximiliansweg** come straight from their OSM
+  route relations (member ways).
+- The **Tiroler Höhenweg** is *not* a named OSM route, so it is routed along OSM
+  trails through its huts (Mayrhofen → Landshuter/Sattelberg → Tribulaunhütte →
+  St. Martin am Schneeberg → Zwickauer Hütte → Stettiner Hütte → Bockerhütte →
+  Meran) with **pgRouting** (`pgr_dijkstraVia`, see `tirol_route.sql`). It is
+  *not* identical to the Meraner Höhenweg (a loop around Meran) — they only
+  share the final section near the Stettiner Hütte.
 
-## App features
+Served transparently at `/tiles/wanderwege/`; usable as an OsmAnd overlay map or
+via the app's layer menu.
 
-- **CyclOSM map** with contour lines, hillshade and MTB-scale colouring.
-- **Offline-first + Nachladen:** reads a bundled MBTiles pack (the four regions)
-  with no network; tiles it lacks (higher zoom / neighbouring areas) are pulled
-  from the tile server on demand and cached — like a normal slippy map
-  (`app/hybridsource.py`).
-- **Live GPS position** marker (via `plyer.gps`).
-- **GPX track recording** (`app/track.py`), like OsmAnd's REC:
-  - Tap **● REC** to start — the track is drawn live on the map as a red line
-    and the status bar shows the point count.
-  - Tap **■ STOP** to finish — a standard **GPX 1.1** file is written to the
-    app's tracks folder (`…/Android/data/org.gerontec.osmcycle/files/tracks/
-    track_<timestamp>.gpx`), one `<trkpt>` per fix with `lat`/`lon`, `<ele>`
-    (if the GPS reports altitude) and UTC `<time>` — ready to open in OsmAnd,
-    Komoot, GPX viewers, etc.
-  - Needs `ACCESS_FINE_LOCATION` (requested at first launch).
+## Use the maps in OsmAnd
+
+```bash
+python3 scripts/mbtiles2osmand.py alpen.mbtiles CyclOSM_Alpen.sqlitedb
+adb push CyclOSM_Alpen.sqlitedb <OsmAnd-data-folder>/tiles/CyclOSM_Alpen.sqlitedb
+```
+
+Or point OsmAnd at the live server with a tiny online-source `.sqlitedb` whose
+`info.url` is `http://[<v6>]:8280/tiles/cyclosm/{0}/{1}/{2}.png` (base) and
+`…/tiles/wanderwege/…` (overlay). Enable the **Online-Karten** plugin, then pick
+them under **Karte konfigurieren → Kartenquelle / Overlay-Karte**.
+
+**Storage:** OsmAnd's data folder may be internal, `Android/media/net.osmand`,
+or a chosen public folder — check **Einstellungen → OsmAnd Einstellungen →
+Datenordner**. For big packs, put them on the **SD card / external storage** and
+point OsmAnd's data folder there. Delete superseded region `.obf`/`.sqlitedb`
+maps to reclaim space.
 
 ## Design notes / decisions
 
-These deviate from a naïve "pip install mapnik + TileStache" plan for good
-reasons — both of those are effectively dead on modern Python:
-
-- **Rendering stack:** `renderd` + Apache `mod_tile` (the canonical OSM tile
-  stack) instead of TileStache. `python3-mapnik` is **not packaged** on Ubuntu
-  26.04 and `pip install mapnik` does not build against Mapnik 4.x, so a Python
-  tile server was not viable. Mapnik 4.2's PostGIS reader ships as
-  `postgis+pgraster.input`.
-- **Serving port:** a dedicated Apache vhost on **8280** (80/443/8080/8088 were
-  already taken by other services), so the existing web stack is untouched.
-- **Landlocked land polygons:** CyclOSM's `project.mml` pulls ~1 GB of global
-  coastline shapefiles. Bayern + Tirol has no coastline, so we substitute one
-  world-covering land polygon (`make_land_shapefile.sh`). The Mapnik Map
-  background is the sea colour `#8ecbeb`; the polygon paints the inland area as
-  land — visually identical here, ~1 GB and lots of time saved.
-- **Hillshade / contours disabled:** those layers already carry `status: off`
-  in `project.mml`, so no DEM or `contours` database is required for a first
-  working render. Enable them later by generating elevation data.
-- **Austria data:** Geofabrik does not split Austria into states, so all of
-  Austria is downloaded and the west (Tirol/Vorarlberg) is clipped to the
-  render bbox `9.9,46.6,13.9,50.6` before merging with Bayern.
-
-## Use the offline maps in OsmAnd
-
-Convert a pack and drop it into OsmAnd's tiles folder — it then appears under
-**Karte konfigurieren → Kartenquelle**:
-
-```bash
-python3 scripts/pack_mbtiles.py 6 15 alpen.mbtiles      # BBOX per region, seeded
-python3 scripts/mbtiles2osmand.py alpen.mbtiles CyclOSM_Alpen.sqlitedb
-adb push CyclOSM_Alpen.sqlitedb \
-  /storage/emulated/0/Android/Media/net.osmand/tiles/CyclOSM_Alpen.sqlitedb
-```
-
-Note: OsmAnd's data folder can be internal *or* `Android/media/net.osmand` —
-check **Einstellungen → OsmAnd Einstellungen → Datenordner** and drop the
-`.sqlitedb` into that folder's `tiles/` subdir. Requires the **Online-Karten**
-plugin enabled. Higher `maxzoom` = sharper (but bigger); z6–15 keeps it usable
-while staying reasonable in size.
+- **Rendering stack:** `renderd` + Apache `mod_tile` (canonical OSM stack).
+  `python3-mapnik` is not packaged on Ubuntu 26.04 and `pip install mapnik`
+  won't build against Mapnik 4.x, so TileStache/python-mapnik was a dead end.
+  Mapnik 4.2's PostGIS reader ships as `postgis+pgraster.input`.
+- **Höhenlinien + Hillshade:** contours from `pyhgtmap --sources=view3` (no NASA
+  account) loaded into a `contours` DB; hillshade via `gdaldem` → `dem/shade.vrt`.
+  The style's hillshade + contour layers (shipped `status: off`) are switched on
+  in `build_dem.sh`. pyhgtmap tags contours `ele` (not `height`) — captured and
+  renamed on import.
+- **Landlocked land polygon:** replaces CyclOSM's ~1 GB coastline shapefiles with
+  one world-covering polygon; the Mapnik sea-colour background then shows as land
+  everywhere inland.
+- **Serving port 8280:** dedicated vhost so the existing web stack (80/443/…) is
+  untouched; dual-stack for IPv6.
+- **Austria data:** Geofabrik doesn't split Austria — the whole country is
+  downloaded and clipped per region (Tirol, Südtirol via Italy nord-est, Kärnten)
+  before merging with Bayern.
+- **APK build:** `p4a.branch = release-2024.01.21` (Python 3.11). p4a master
+  builds Python 3.14, which kivy 2.3.0's Cython C does not compile against.
 
 ## Attribution
 
-Map data © OpenStreetMap contributors (ODbL). Rendering style: CyclOSM
-(BSD-2-Clause), see the `style/` submodule.
+Map data © OpenStreetMap contributors (ODbL). Style: CyclOSM (BSD-2-Clause,
+`style/` submodule). Elevation: viewfinderpanoramas (SRTM-derived).
