@@ -3,12 +3,12 @@ title = OSMCycle
 package.name = osmcycle
 package.domain = org.gerontec
 source.dir = .
-source.include_exts = py,png,jpg,kv,atlas,json,mbtiles
+source.include_exts = py,png,jpg,kv,atlas,json,mbtiles,gpx
 version = 0.1
 requirements = python3,kivy==2.3.0,kivy_garden.mapview,requests,certifi,setuptools,sqlite3,plyer,pyjnius
 orientation = portrait
 fullscreen = 0
-android.permissions = INTERNET,ACCESS_NETWORK_STATE,ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION,WRITE_EXTERNAL_STORAGE,FOREGROUND_SERVICE
+android.permissions = INTERNET,ACCESS_NETWORK_STATE,ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION,WRITE_EXTERNAL_STORAGE,MANAGE_EXTERNAL_STORAGE,FOREGROUND_SERVICE
 android.api = 34
 android.minapi = 21
 android.ndk = 25b

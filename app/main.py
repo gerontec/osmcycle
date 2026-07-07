@@ -3,23 +3,23 @@
 * Offline map (combined MBTiles) + Nachladen from the tile server.
 * GPS track recording -> GPX (like OsmAnd).
 * Current-position arrow (rotates to heading) + centre-on-me button.
-* Layer menu to toggle the 3 long-distance hiking trails (Wanderwege).
+
+Hiking trails and recorded tracks are shown as an efficient GPX overlay.
 """
-import json
+import glob
 import os
+import shutil
 
 from kivy.app import App
 from kivy.clock import Clock
-from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.label import Label
-from kivy.uix.popup import Popup
 from kivy.uix.togglebutton import ToggleButton
 from kivy_garden.mapview import MapView, MapSource
 
 from hybridsource import HybridMapSource
-from track import TrackLayer, TrackRecorder, PositionLayer, WanderwegeLayer
+from track import TrackLayer, TrackRecorder, PositionLayer, GpxLayer, gpx_dir
 
 MBTILES_NAME = "alpen.mbtiles"
 ONLINE_URL = "http://[2a02:810d:4117:7300:ce96:e5ff:fe01:e09c]:8280/tiles/cyclosm/{z}/{x}/{y}.png"
@@ -40,12 +40,36 @@ def find_mbtiles():
     return next((p for p in paths if p and os.path.exists(p)), None)
 
 
-def load_wanderwege():
+def request_all_files_access():
+    """Ask for 'All files access' so the public gpx folder (Syncthing) is
+    writable on Android 11+. No-op elsewhere / if already granted."""
     try:
-        with open(os.path.join(HERE, "wanderwege.json")) as f:
-            return json.load(f)
+        from jnius import autoclass
+        Environment = autoclass("android.os.Environment")
+        if Environment.isExternalStorageManager():
+            return
+        Intent = autoclass("android.content.Intent")
+        Settings = autoclass("android.provider.Settings")
+        Uri = autoclass("android.net.Uri")
+        act = autoclass("org.kivy.android.PythonActivity").mActivity
+        intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+        intent.setData(Uri.parse("package:" + act.getPackageName()))
+        act.startActivity(intent)
     except Exception:
-        return []
+        pass
+
+
+def seed_gpx():
+    """Copy the bundled routes into the (public) gpx folder once, so bundled
+    routes and own recordings live in the SAME folder that Syncthing sees."""
+    dest = gpx_dir()
+    for f in glob.glob(os.path.join(HERE, "gpx", "*.gpx")):
+        t = os.path.join(dest, os.path.basename(f))
+        if not os.path.exists(t):
+            try:
+                shutil.copy(f, t)
+            except Exception:
+                pass
 
 
 class OSMCycleApp(App):
@@ -68,8 +92,11 @@ class OSMCycleApp(App):
 
         self.track_layer = TrackLayer()
         self.mapview.add_layer(self.track_layer)
-        self.ww_layer = WanderwegeLayer(load_wanderwege())
-        self.mapview.add_layer(self.ww_layer)
+        # single (public) gpx folder: bundled routes + own recordings
+        request_all_files_access()
+        seed_gpx()
+        self.gpx_layer = GpxLayer([gpx_dir()])
+        self.mapview.add_layer(self.gpx_layer)
         self.pos_layer = PositionLayer()
         self.mapview.add_layer(self.pos_layer)
 
@@ -88,11 +115,12 @@ class OSMCycleApp(App):
         self.rec_btn.bind(on_press=self.toggle_record)
         root.add_widget(self.rec_btn)
 
-        # Layer menu (top-right)
-        layer_btn = Button(text="≡ Layer", size_hint=(None, None), size=(150, 60),
-                           pos_hint={"right": 0.98, "top": 0.99})
-        layer_btn.bind(on_release=self.open_layers)
-        root.add_widget(layer_btn)
+        # GPX overlay toggle (top-right)
+        self.gpx_btn = ToggleButton(text="GPX", size_hint=(None, None), size=(150, 60),
+                                    pos_hint={"right": 0.98, "top": 0.99})
+        self.gpx_btn.bind(
+            on_release=lambda b: self.gpx_layer.set_visible(b.state == "down"))
+        root.add_widget(self.gpx_btn)
 
         # Centre-on-me (bottom-right, circle symbol)
         self.center_btn = Button(text="◎", font_size=42, size_hint=(None, None),
@@ -102,18 +130,6 @@ class OSMCycleApp(App):
 
         Clock.schedule_once(lambda dt: self.start_gps(), 1)
         return root
-
-    # --- layer menu ------------------------------------------------------
-    def open_layers(self, *_):
-        box = BoxLayout(orientation="vertical", spacing=8, padding=12)
-        tb = ToggleButton(text="Wanderwege (Höhenwege)",
-                          state="down" if self.ww_layer.visible else "normal",
-                          size_hint_y=None, height=64)
-        tb.bind(on_release=lambda b: self.ww_layer.set_visible(b.state == "down"))
-        box.add_widget(tb)
-        box.add_widget(Label(text="🔴 Karnischer  🔵 Maximilians  🟢 Tiroler",
-                             size_hint_y=None, height=40))
-        Popup(title="Layer", content=box, size_hint=(0.8, 0.4)).open()
 
     # --- GPS -------------------------------------------------------------
     def start_gps(self):

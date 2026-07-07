@@ -1,26 +1,43 @@
-"""GPS track recording + GPX export + on-map track line for OSMCycle."""
+"""GPS track recording + GPX export + on-map track/GPX layers for OSMCycle."""
+import glob
 import os
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 from kivy.graphics import Color, Line, Ellipse, Triangle, PushMatrix, PopMatrix, Rotate
 from kivy_garden.mapview import MapLayer
 
 
+def _writable(d):
+    try:
+        os.makedirs(d, exist_ok=True)
+        t = os.path.join(d, ".w")
+        open(t, "w").close()
+        os.remove(t)
+        return True
+    except Exception:
+        return False
+
+
 def gpx_dir():
-    """Writable folder for .gpx files (app external dir on Android)."""
+    """Single folder holding ALL .gpx (bundled routes seeded on first start +
+    own recorded tracks), also what GpxLayer reads. Prefers a PUBLIC folder so
+    Syncthing can sync it; falls back to the app-private dir if not writable
+    (needs 'All files access' for the public path)."""
+    candidates = ["/sdcard/osmcycle", "/storage/emulated/0/osmcycle"]
     try:
         from android import mActivity  # type: ignore
         ext = mActivity.getExternalFilesDir(None)
-        if ext:
-            d = os.path.join(ext.getAbsolutePath(), "tracks")
-            os.makedirs(d, exist_ok=True)
-            return d
+        if ext:                                   # app-private fallback
+            candidates.append(os.path.join(ext.getAbsolutePath(), "gpx"))
     except Exception:
         pass
-    d = os.path.join(os.path.expanduser("~"), "osmcycle_tracks")
-    os.makedirs(d, exist_ok=True)
-    return d
+    candidates.append(os.path.join(os.path.expanduser("~"), "osmcycle_gpx"))
+    for d in candidates:
+        if _writable(d):
+            return d
+    return candidates[-1]
 
 
 class TrackLayer(MapLayer):
@@ -85,26 +102,64 @@ class PositionLayer(MapLayer):
             PopMatrix()
 
 
-class WanderwegeLayer(MapLayer):
-    """Toggleable overlay: the 3 long-distance hiking trails as coloured lines,
-    read from a bundled JSON (list of {color, points:[[lon,lat],...]})."""
-    COLORS = {"karnisch": (0.84, 0.10, 0.11),
-              "maximilian": (0.17, 0.48, 0.71),
-              "tirol": (0.10, 0.59, 0.25)}
+class GpxLayer(MapLayer):
+    """Toggleable GPX overlay, rendered like OsmAnd: every .gpx in the given
+    folder(s) becomes coloured track lines. Kept smooth by (1) a zoom floor,
+    (2) per-segment viewport culling and (3) screen-space point decimation, so
+    only geometry near the active window is projected/drawn."""
+    MIN_ZOOM = 11        # below this a whole trail fills the screen -> skip (lag)
+    DECIMATE_PX = 2.5    # drop points closer than this (in screen px) to the last
+    DEFAULT_COLOR = (0.60, 0.10, 0.75, 0.9)
 
-    def __init__(self, features, **kwargs):
+    def __init__(self, dirs, **kwargs):
         super().__init__(**kwargs)
         self.visible = False
-        self.features = []          # precompute each feature's lon/lat bbox
-        for f in features:
-            pts = f.get("points") or []
-            if len(pts) < 2:
+        self.segments = []          # {"points":[(lat,lon)], "bb":(la0,lo0,la1,lo1), "color"}
+        if isinstance(dirs, str):
+            dirs = [dirs]
+        for d in dirs:
+            for path in sorted(glob.glob(os.path.join(d or "", "*.gpx"))):
+                try:
+                    self._load(path)
+                except Exception:
+                    pass
+
+    @staticmethod
+    def _hex_rgba(text):
+        try:
+            s = text.strip().lstrip("#")
+            return (int(s[0:2], 16) / 255.0, int(s[2:4], 16) / 255.0,
+                    int(s[4:6], 16) / 255.0, 0.9)
+        except Exception:
+            return GpxLayer.DEFAULT_COLOR
+
+    def _load(self, path):
+        root = ET.parse(path).getroot()
+        for trk in root:
+            if not trk.tag.endswith("trk"):
                 continue
-            lons = [p[0] for p in pts]
-            lats = [p[1] for p in pts]
-            self.features.append({
-                "trail": f["trail"], "points": pts,
-                "bb": (min(lons), min(lats), max(lons), max(lats))})
+            color = self.DEFAULT_COLOR
+            for child in trk:
+                if child.tag.endswith("extensions"):
+                    for c in child.iter():
+                        if c.tag.endswith("color") and c.text:
+                            color = self._hex_rgba(c.text)
+            for seg in trk:
+                if not seg.tag.endswith("trkseg"):
+                    continue
+                pts = []
+                for pt in seg:
+                    if pt.tag.endswith("trkpt"):
+                        try:
+                            pts.append((float(pt.get("lat")), float(pt.get("lon"))))
+                        except (TypeError, ValueError):
+                            pass
+                if len(pts) >= 2:
+                    lats = [p[0] for p in pts]
+                    lons = [p[1] for p in pts]
+                    self.segments.append({
+                        "points": pts, "color": color,
+                        "bb": (min(lats), min(lons), max(lats), max(lons))})
 
     def set_visible(self, on):
         self.visible = on
@@ -115,26 +170,34 @@ class WanderwegeLayer(MapLayer):
         self.canvas.clear()
         if not mapview or not self.visible:
             return
-        try:                        # visible viewport in lon/lat (+ margin)
+        if int(mapview.zoom) < self.MIN_ZOOM:
+            return                       # zoomed out: overview adds nothing but lag
+        try:                             # visible viewport (lat/lon) + margin
             bb = mapview.get_bbox()
             vlatmin, vlatmax = min(bb[0], bb[2]), max(bb[0], bb[2])
             vlonmin, vlonmax = min(bb[1], bb[3]), max(bb[1], bb[3])
         except Exception:
-            vlatmin = vlonmin = -1e9
-            vlatmax = vlonmax = 1e9
+            return                       # unknown viewport -> draw nothing (fast)
+        mlat = (vlatmax - vlatmin) * 0.2
+        mlon = (vlonmax - vlonmin) * 0.2
+        vlatmin -= mlat; vlatmax += mlat; vlonmin -= mlon; vlonmax += mlon
+        zoom = mapview.zoom
+        d = self.DECIMATE_PX
         with self.canvas:
-            for feat in self.features:
-                blon0, blat0, blon1, blat1 = feat["bb"]
-                if (blon1 < vlonmin or blon0 > vlonmax or
-                        blat1 < vlatmin or blat0 > vlatmax):
-                    continue        # feature fully off-screen -> skip
-                r, g, b = self.COLORS.get(feat["trail"], (0.5, 0.5, 0.5))
-                Color(r, g, b, 0.9)
+            for seg in self.segments:
+                la0, lo0, la1, lo1 = seg["bb"]
+                if (la1 < vlatmin or la0 > vlatmax or
+                        lo1 < vlonmin or lo0 > vlonmax):
+                    continue             # segment off-screen -> skip
                 coords = []
-                for lon, lat in feat["points"]:
-                    px, py = mapview.get_window_xy_from(lat, lon, mapview.zoom)
-                    coords += [px, py]
+                lx = ly = None
+                for lat, lon in seg["points"]:
+                    x, y = mapview.get_window_xy_from(lat, lon, zoom)
+                    if lx is None or abs(x - lx) + abs(y - ly) >= d:
+                        coords += [x, y]
+                        lx, ly = x, y
                 if len(coords) >= 4:
+                    Color(*seg["color"])
                     Line(points=coords, width=2.2, joint="round", cap="round")
 
 
