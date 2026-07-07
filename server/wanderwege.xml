@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Transparent overlay layer for 3 long-distance hiking trails, served by
+     renderd as a separate map (URI /tiles/wanderwege/). Add it in OsmAnd as an
+     Overlay-Karte, or as a toggleable layer in the app. Colours:
+       Karnischer Höhenweg = red, Maximiliansweg = blue, Tiroler Höhenweg = green.
+     Data comes from the `wanderwege` table (see scripts/build_wanderwege.sh). -->
+<Map background-color="rgba(0,0,0,0)" srs="+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0.0 +k=1.0 +units=m +nadgrids=@null +wktext +no_defs +over" maximum-extent="-20037508.34,-20037508.34,20037508.34,20037508.34">
+  <Style name="ww">
+    <Rule><Filter>[trail]='karnisch'</Filter>
+      <LineSymbolizer stroke="#d7191c" stroke-width="3.5" stroke-opacity="0.85" stroke-linejoin="round" stroke-linecap="round"/></Rule>
+    <Rule><Filter>[trail]='maximilian'</Filter>
+      <LineSymbolizer stroke="#2c7bb6" stroke-width="3.5" stroke-opacity="0.85" stroke-linejoin="round" stroke-linecap="round"/></Rule>
+    <Rule><Filter>[trail]='tirol'</Filter>
+      <LineSymbolizer stroke="#1a9641" stroke-width="3.5" stroke-opacity="0.85" stroke-linejoin="round" stroke-linecap="round"/></Rule>
+  </Style>
+  <Layer name="ww" srs="+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0.0 +k=1.0 +units=m +nadgrids=@null +wktext +no_defs +over">
+    <StyleName>ww</StyleName>
+    <Datasource>
+      <Parameter name="type">postgis</Parameter>
+      <Parameter name="dbname">osm</Parameter>
+      <Parameter name="table">wanderwege</Parameter>
+      <Parameter name="geometry_field">way</Parameter>
+      <Parameter name="srid">3857</Parameter>
+      <Parameter name="extent">-20037508,-20037508,20037508,20037508</Parameter>
+    </Datasource>
+  </Layer>
+</Map>

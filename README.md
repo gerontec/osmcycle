@@ -1,8 +1,9 @@
-# OSMCycle — CyclOSM map app for Bayern + Tirol
+# OSMCycle — CyclOSM cycling app for Bayern + Tirol + Südtirol + Kärnten
 
-A self-hosted [CyclOSM](https://www.cyclosm.org/) raster tile server plus a
-small [Kivy](https://kivy.org/) Android app that displays it. Coverage: all of
-**Bayern** and **Tirol** (western Austria, clipped to the render bbox).
+A self-hosted [CyclOSM](https://www.cyclosm.org/) raster tile server (with
+**contour lines + hillshade + MTB scale**, like osm.org's `layers=Y`) plus a
+small [Kivy](https://kivy.org/) Android app that shows it and **records GPS
+tracks as GPX**. Coverage: **Bayern, Tirol, Südtirol and Kärnten**.
 
 ```
 OSM data (Geofabrik)  ─▶  PostGIS (osm2pgsql)  ─▶  Mapnik / CyclOSM CartoCSS
@@ -21,8 +22,9 @@ needed on the server; the phone only does OpenGL compositing in the app.
 
 | Path | What |
 |------|------|
-| `app/main.py` | Kivy app (offline-first MapView) |
+| `app/main.py` | Kivy app: MapView + position + REC button |
 | `app/hybridsource.py` | tile source: MBTiles offline, network fallback |
+| `app/track.py` | GPS track recorder → GPX + on-map track line |
 | `app/buildozer.spec` | buildozer config → debug APK |
 | `style/` | git submodule → `cyclosm/cyclosm-cartocss-style` |
 | `server/renderd.conf.example` | renderd config (Mapnik 4.2 plugin path, `cyclosm` map) |
@@ -83,6 +85,24 @@ pulled from the server on demand and disk-cached — like a normal slippy map
 The app looks for `bayern-tirol.mbtiles` in its external files dir (no runtime
 permission needed), then `/sdcard/osmcycle/`. Set `ONLINE_URL` in
 `app/main.py` to a host the phone can reach (LAN/VPN) for on-demand loading.
+
+## App features
+
+- **CyclOSM map** with contour lines, hillshade and MTB-scale colouring.
+- **Offline-first + Nachladen:** reads a bundled MBTiles pack (the four regions)
+  with no network; tiles it lacks (higher zoom / neighbouring areas) are pulled
+  from the tile server on demand and cached — like a normal slippy map
+  (`app/hybridsource.py`).
+- **Live GPS position** marker (via `plyer.gps`).
+- **GPX track recording** (`app/track.py`), like OsmAnd's REC:
+  - Tap **● REC** to start — the track is drawn live on the map as a red line
+    and the status bar shows the point count.
+  - Tap **■ STOP** to finish — a standard **GPX 1.1** file is written to the
+    app's tracks folder (`…/Android/data/org.gerontec.osmcycle/files/tracks/
+    track_<timestamp>.gpx`), one `<trkpt>` per fix with `lat`/`lon`, `<ele>`
+    (if the GPS reports altitude) and UTC `<time>` — ready to open in OsmAnd,
+    Komoot, GPX viewers, etc.
+  - Needs `ACCESS_FINE_LOCATION` (requested at first launch).
 
 ## Design notes / decisions
 

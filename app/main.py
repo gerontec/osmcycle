@@ -1,27 +1,29 @@
 """OSMCycle - CyclOSM cycling app for Bayern + Tirol + Kärnten + Südtirol.
 
-* Offline map: reads a combined MBTiles pack (all 4 regions), so it works with
-  no network.
-* Nachladen: tiles the pack lacks (higher zoom / neighbouring areas) are pulled
-  from the tile server on demand and cached, like a normal slippy map.
-* Track recording: records the GPS track and exports it as GPX (like OsmAnd).
+* Offline map (combined MBTiles) + Nachladen from the tile server.
+* GPS track recording -> GPX (like OsmAnd).
+* Current-position arrow (rotates to heading) + centre-on-me button.
+* Layer menu to toggle the 3 long-distance hiking trails (Wanderwege).
 """
+import json
 import os
 
 from kivy.app import App
 from kivy.clock import Clock
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.button import Button
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.label import Label
+from kivy.uix.popup import Popup
 from kivy.uix.togglebutton import ToggleButton
-from kivy_garden.mapview import MapView, MapMarker, MapSource
+from kivy_garden.mapview import MapView, MapSource
 
 from hybridsource import HybridMapSource
-from track import TrackLayer, TrackRecorder
+from track import TrackLayer, TrackRecorder, PositionLayer, WanderwegeLayer
 
-MBTILES_NAME = "alpen.mbtiles"              # combined 4-region offline pack
-# Tile server for on-demand loading (set to a host the phone can reach).
-ONLINE_URL = "http://192.168.5.23:8280/tiles/cyclosm/{z}/{x}/{y}.png"
-BBOX = (9.9, 46.2, 15.1, 50.6)              # Bayern+Tirol+Südtirol+Kärnten
+MBTILES_NAME = "alpen.mbtiles"
+ONLINE_URL = "http://[2a02:810d:4117:7300:ce96:e5ff:fe01:e09c]:8280/tiles/cyclosm/{z}/{x}/{y}.png"
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def find_mbtiles():
@@ -33,10 +35,17 @@ def find_mbtiles():
             paths.append(os.path.join(ext.getAbsolutePath(), MBTILES_NAME))
     except Exception:
         pass
-    here = os.path.dirname(os.path.abspath(__file__))
     paths += [os.path.join("/sdcard/osmcycle", MBTILES_NAME),
-              os.path.join(here, MBTILES_NAME), MBTILES_NAME]
+              os.path.join(HERE, MBTILES_NAME), MBTILES_NAME]
     return next((p for p in paths if p and os.path.exists(p)), None)
+
+
+def load_wanderwege():
+    try:
+        with open(os.path.join(HERE, "wanderwege.json")) as f:
+            return json.load(f)
+    except Exception:
+        return []
 
 
 class OSMCycleApp(App):
@@ -53,27 +62,57 @@ class OSMCycleApp(App):
                                attribution="© OpenStreetMap, CyclOSM")
 
         root = FloatLayout()
-        self.mapview = MapView(zoom=13, lat=47.68, lon=11.57)  # Lenggries
+        self.mapview = MapView(zoom=13, lat=47.68, lon=11.57)
         self.mapview.map_source = source
         root.add_widget(self.mapview)
 
         self.track_layer = TrackLayer()
         self.mapview.add_layer(self.track_layer)
-        self.marker = None
+        self.ww_layer = WanderwegeLayer(load_wanderwege())
+        self.mapview.add_layer(self.ww_layer)
+        self.pos_layer = PositionLayer()
+        self.mapview.add_layer(self.pos_layer)
+
         self.recorder = TrackRecorder()
+        self.last_lat = self.last_lon = None
 
         self.status = Label(text="GPS: warte…", size_hint=(None, None),
                             size=(360, 44), pos_hint={"x": 0.01, "top": 0.99},
                             color=(0, 0, 0, 1), halign="left")
         root.add_widget(self.status)
 
+        # REC (bottom-left)
         self.rec_btn = ToggleButton(text="● REC", size_hint=(None, None),
                                     size=(150, 60), pos_hint={"x": 0.02, "y": 0.03})
         self.rec_btn.bind(on_press=self.toggle_record)
         root.add_widget(self.rec_btn)
 
+        # Layer menu (top-right)
+        layer_btn = Button(text="≡ Layer", size_hint=(None, None), size=(150, 60),
+                           pos_hint={"right": 0.98, "top": 0.99})
+        layer_btn.bind(on_release=self.open_layers)
+        root.add_widget(layer_btn)
+
+        # Centre-on-me (bottom-right, circle symbol)
+        self.center_btn = Button(text="◎", font_size=42, size_hint=(None, None),
+                                 size=(110, 110), pos_hint={"right": 0.98, "y": 0.03})
+        self.center_btn.bind(on_release=self.center_on_me)
+        root.add_widget(self.center_btn)
+
         Clock.schedule_once(lambda dt: self.start_gps(), 1)
         return root
+
+    # --- layer menu ------------------------------------------------------
+    def open_layers(self, *_):
+        box = BoxLayout(orientation="vertical", spacing=8, padding=12)
+        tb = ToggleButton(text="Wanderwege (Höhenwege)",
+                          state="down" if self.ww_layer.visible else "normal",
+                          size_hint_y=None, height=64)
+        tb.bind(on_release=lambda b: self.ww_layer.set_visible(b.state == "down"))
+        box.add_widget(tb)
+        box.add_widget(Label(text="🔴 Karnischer  🔵 Maximilians  🟢 Tiroler",
+                             size_hint_y=None, height=40))
+        Popup(title="Layer", content=box, size_hint=(0.8, 0.4)).open()
 
     # --- GPS -------------------------------------------------------------
     def start_gps(self):
@@ -89,30 +128,29 @@ class OSMCycleApp(App):
             gps.start(minTime=1000, minDistance=1)
             self.status.text = "GPS: aktiv"
         except Exception as e:
-            self.status.text = f"GPS nicht verfügbar ({e})"
+            self.status.text = f"GPS n/v ({e})"
 
     def on_location(self, **kwargs):
-        lat = kwargs.get("lat")
-        lon = kwargs.get("lon")
-        ele = kwargs.get("altitude")
+        lat, lon = kwargs.get("lat"), kwargs.get("lon")
         if lat is None or lon is None:
             return
-        Clock.schedule_once(lambda dt: self._update(lat, lon, ele), 0)
+        Clock.schedule_once(
+            lambda dt: self._update(lat, lon, kwargs.get("altitude"),
+                                    kwargs.get("bearing")), 0)
 
-    def _update(self, lat, lon, ele):
-        if self.marker is None:
-            self.marker = MapMarker(lat=lat, lon=lon)
-            self.mapview.add_marker(self.marker)
-        else:
-            self.marker.lat, self.marker.lon = lat, lon
-            self.mapview.remove_marker(self.marker)
-            self.mapview.add_marker(self.marker)
+    def _update(self, lat, lon, ele, bearing):
+        self.last_lat, self.last_lon = lat, lon
+        self.pos_layer.set_position(lat, lon, bearing)
         if self.recorder.recording:
             self.recorder.add(lat, lon, ele)
             self.track_layer.add_point(lat, lon)
             self.status.text = f"REC · {len(self.recorder.points)} Punkte"
         else:
             self.status.text = f"GPS: {lat:.5f}, {lon:.5f}"
+
+    def center_on_me(self, *_):
+        if self.last_lat is not None:
+            self.mapview.center_on(self.last_lat, self.last_lon)
 
     # --- recording -------------------------------------------------------
     def toggle_record(self, *_):
@@ -124,8 +162,8 @@ class OSMCycleApp(App):
         else:
             path = self.recorder.stop_and_save()
             self.rec_btn.text = "● REC"
-            self.status.text = f"GPX gespeichert: {os.path.basename(path)}" if path \
-                else "Kein Track aufgezeichnet"
+            self.status.text = (f"GPX: {os.path.basename(path)}" if path
+                                else "Kein Track")
 
 
 if __name__ == "__main__":
