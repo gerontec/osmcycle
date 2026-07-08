@@ -6,6 +6,14 @@ contour lines, hillshade and MTB-scale colouring** (like openstreetmap.org's
 **records GPS tracks as GPX**, and can overlay three long-distance hiking
 trails. Coverage: **Bayern, Tirol, Südtirol and Kärnten**.
 
+Recorded rides upload themselves to a public online report — no Syncthing, no PC:
+
+**➡ Live-Report: https://heissa.de/web1/gpx_report.php**
+
+The server side of that report lives in [`server/gpx_report.py`](server/gpx_report.py)
+(hourly generator) and [`server/gpx_upload.php`](server/gpx_upload.php) (the
+public, token-free drop endpoint).
+
 ## Fertige Karte laden — einfachster Weg (ohne selbst zu rendern)
 
 Vorgerenderte Offline-Karten liegen zum Download bereit:
@@ -58,6 +66,8 @@ server; the phone only does OpenGL compositing.
 | `server/renderd.conf.example` | renderd config (Mapnik 4.2 plugin path, maps) |
 | `server/tileserver-vhost.conf.example` | Apache mod_tile vhost, port **8280** |
 | `server/wanderwege.xml` | Mapnik overlay style for the 3 trails |
+| `server/gpx_report.py` | hourly generator of the public GPX report (Bootstrap+Leaflet) |
+| `server/gpx_upload.php` | public token-free GPX drop endpoint for the app |
 | `scripts/setup_tileserver.sh` | one-shot server bring-up |
 | `scripts/import_osm.sh` | download + merge + `osm2pgsql` import |
 | `scripts/make_land_shapefile.sh` | landlocked land-polygon substitute |
