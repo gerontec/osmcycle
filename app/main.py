@@ -302,16 +302,6 @@ class OSMCycleApp(App):
             self._disp_ev.cancel()
             self._disp_ev = None
 
-    def on_pause(self):
-        # release GPS in the background to save battery — unless recording a track
-        if not self.recorder.recording:
-            self._gps_stop()
-        return True
-
-    def on_resume(self):
-        if not getattr(self, "_gps_on", False):
-            self._gps_start()
-
     def _read_location(self):
         """Current fix straight from Android LocationManager. Works even when the
         plyer on_location callback never fires. Returns (lat, lon, ele, bearing)

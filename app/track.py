@@ -308,15 +308,21 @@ class TrackRecorder:
         self.recording = False
         self.points = []       # (lat, lon, ele, iso_time)
         self.start_ts = None
+        self._last_ele = None
 
     def start(self):
         self.recording = True
         self.points = []
+        self._last_ele = None
         self.start_ts = time.strftime("%Y-%m-%d_%H-%M-%S")
 
     def add(self, lat, lon, ele=None):
         if not self.recording:
             return
+        if ele is None:                 # carry forward last known altitude so
+            ele = self._last_ele        # every point keeps an <ele>
+        else:
+            self._last_ele = ele
         t = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.points.append((lat, lon, ele, t))
 
