@@ -125,12 +125,12 @@ class OSMCycleApp(App):
         self.mapview.add_layer(self.pos_layer)
 
         self.recorder = TrackRecorder()
-        self.last_lat = self.last_lon = None
+        self.last_lat = self.last_lon = self.last_ele = None
         self._centered = False
 
         self.status = Label(text="GPS: warte…", size_hint=(None, None),
-                            size=(560, 60), pos_hint={"x": 0.01, "top": 0.99},
-                            color=(0, 0, 0, 1), halign="left", font_size="30sp")
+                            size=(560, 40), pos_hint={"x": 0.01, "top": 0.99},
+                            color=(0, 0, 0, 1), halign="left", font_size="15sp")
         root.add_widget(self.status)
 
         # REC (bottom-left)
@@ -300,12 +300,17 @@ class OSMCycleApp(App):
 
     def _update(self, lat, lon, ele, bearing):
         self.last_lat, self.last_lon = lat, lon
+        if ele is not None:
+            self.last_ele = ele
         self.pos_layer.set_position(lat, lon, bearing)
         if not self._centered:            # centre once so the arrow is on-screen
             self._centered = True
             self.mapview.center_on(lat, lon)
         if not self.recorder.recording:
-            self.status.text = f"GPS: {lat:.5f}, {lon:.5f}"
+            self.status.text = f"{lat:.5f}, {lon:.5f}{self._ele_str()}"
+
+    def _ele_str(self):
+        return f"  ⛰ {self.last_ele:.0f} m" if self.last_ele is not None else ""
 
     def _rec_tick(self, dt):
         """Every 10 s while recording: sample the position via LocationManager,
@@ -318,7 +323,7 @@ class OSMCycleApp(App):
         self._update(lat, lon, ele, bearing)      # keep the arrow fresh
         self.recorder.add(lat, lon, ele)
         self.track_layer.add_point(lat, lon)      # draws the line + a dot
-        self.status.text = f"REC · {len(self.recorder.points)} Punkte"
+        self.status.text = f"REC · {len(self.recorder.points)} Punkte{self._ele_str()}"
 
     def center_on_me(self, *_):
         if self.last_lat is not None:

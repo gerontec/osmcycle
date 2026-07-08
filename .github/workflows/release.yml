@@ -1,32 +1,29 @@
-name: Build & Release APK
+name: Release APK
 
+# The APK is built locally (fast, reliable) and uploaded to netcup; this
+# workflow just fetches it and publishes a GitHub release so Obtainium can
+# auto-update. Token-free (uses GITHUB_TOKEN), no building in CI.
 on:
   push:
     tags: ['v*']
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Build APK (pinned debug keystore for stable signature)
-        uses: ArtemSBulgakov/buildozer-action@v1
-        id: buildozer
-        with:
-          workdir: app
-          command: >
-            mkdir -p $HOME/.android &&
-            cp ../ci/debug.keystore $HOME/.android/debug.keystore &&
-            buildozer android debug
+      - name: Fetch pre-built APK from netcup
+        run: |
+          curl -fSL --retry 5 --retry-delay 10 \
+            -o "osmcycle-${GITHUB_REF_NAME}.apk" \
+            "https://tmind.de/maps/apk/osmcycle-${GITHUB_REF_NAME}.apk"
+          ls -la osmcycle-*.apk
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.buildozer.outputs.filename }}
+          files: osmcycle-${{ github.ref_name }}.apk
           generate_release_notes: true
           fail_on_unmatched_files: true

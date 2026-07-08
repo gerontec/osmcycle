@@ -4,7 +4,7 @@ package.name = osmcycle
 package.domain = org.gerontec
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json,mbtiles,gpx
-version = 0.2
+version = 0.3
 requirements = python3,kivy==2.3.0,kivy_garden.mapview,requests,certifi,setuptools,sqlite3,plyer,pyjnius
 orientation = portrait
 fullscreen = 0
