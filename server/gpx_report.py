@@ -294,11 +294,15 @@ def parse_gpx(filepath, elev_data):
     if coords[-1] != last:
         coords.append(last)
 
+    # Optionaler Uploader-Name: Suffix "__name" im Dateinamen (Upload-Seite)
+    by = name.split('__')[-1].replace('_', ' ').strip() if '__' in name else None
+
     return {
         'filename':    filepath.name,
         'date_str':    date_str,
         'sort_key':    name[:10],
         'place':       place,
+        'by':          by,
         'ele_start':   points[0]['ele'],
         'ele_end':     max((p['ele'] for p in points if p['ele'] is not None), default=None),
         'dist_km':     dist_km,
@@ -326,6 +330,7 @@ def write_report(tracks):
             'sort_key':  t['sort_key'],          # YYYY-MM-DD
             'date_str':  t['date_str'],
             'place':     t['place'],
+            'by':        t.get('by'),
             'ele_start': round(t['ele_start']) if t['ele_start'] is not None else None,
             'ele_end':   round(t['ele_end'])   if t['ele_end']   is not None else None,
             'dist_km':     round(t['dist_km'], 1),
@@ -501,7 +506,7 @@ function fmt_dur($h)  {{
           <?php foreach (array_values($filtered) as $idx => $t): ?>
           <tr onclick="showTrack(<?= $idx ?>)" title="Auf Karte anzeigen">
             <td><?= htmlspecialchars($t['date_str']) ?></td>
-            <td><span class="badge-place"><?= htmlspecialchars($t['place']) ?></span></td>
+            <td><span class="badge-place"><?= htmlspecialchars($t['place']) ?></span><?php if (!empty($t['by'])): ?> <span style="opacity:.65;font-size:.85em">· von <?= htmlspecialchars($t['by']) ?></span><?php endif; ?></td>
             <td class="text-end"><?= fmt_ele($t['ele_start']) ?></td>
             <td class="text-end"><?= fmt_ele($t['ele_end']) ?></td>
             <td class="text-end"><?= fmt_f1($t['dist_km']) ?> km</td>
@@ -528,7 +533,7 @@ function fmt_dur($h)  {{
            style="background:var(--gpx-green)">
         <span class="text-white fw-semibold"><?= htmlspecialchars($t['date_str']) ?></span>
         <span style="background:rgba(255,255,255,.2);color:#fff;font-size:.8em;padding:2px 9px;border-radius:12px">
-          &#128205; <?= htmlspecialchars($t['place']) ?>
+          &#128205; <?= htmlspecialchars($t['place']) ?><?php if (!empty($t['by'])): ?> · <?= htmlspecialchars($t['by']) ?><?php endif; ?>
         </span>
       </div>
       <div class="card-body p-0">
@@ -599,17 +604,35 @@ const allTracks = <?= json_encode($track_map_data) ?>;
 let leafletMap  = null;
 let mapLayers   = [];
 let pendingIdx  = null;
+let cyclosmLayer = null, osmLayer = null, activeBase = null;
+
+// Abdeckung unserer eigenen CyclOSM-Kacheln (Bayern+Tirol+Südtirol+Kärnten).
+// Tracks ausserhalb -> OSM-Standardkarte als Fallback.
+const COV = {{w: 9.9, s: 46.2, e: 15.1, n: 50.6}};
+
+function baseLayer(useCyclosm) {{
+  if (useCyclosm) {{
+    if (!cyclosmLayer) cyclosmLayer = L.tileLayer(
+      'https://tmind.de/maps/tile.php?z={{z}}&x={{x}}&y={{y}}',
+      {{attribution: '&copy; OpenStreetMap, <a href="https://www.cyclosm.org/">CyclOSM</a>',
+        maxZoom: 14, maxNativeZoom: 14}});
+    return cyclosmLayer;
+  }}
+  if (!osmLayer) osmLayer = L.tileLayer(
+    'https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
+    {{attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      maxZoom: 19}});
+  return osmLayer;
+}}
+
+function insideCoverage(coords) {{
+  return coords.every(c => c[0] >= COV.s && c[0] <= COV.n && c[1] >= COV.w && c[1] <= COV.e);
+}}
 
 const mapModalEl = document.getElementById('mapModal');
 
 mapModalEl.addEventListener('shown.bs.modal', function() {{
-  if (!leafletMap) {{
-    leafletMap = L.map('leaflet-map');
-    L.tileLayer('https://tmind.de/maps/tile.php?z={{z}}&x={{x}}&y={{y}}', {{
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, <a href="https://www.cyclosm.org/">CyclOSM</a>',
-      maxZoom: 14, maxNativeZoom: 14
-    }}).addTo(leafletMap);
-  }}
+  if (!leafletMap) leafletMap = L.map('leaflet-map');
   leafletMap.invalidateSize();
 
   if (pendingIdx === null) return;
@@ -617,6 +640,13 @@ mapModalEl.addEventListener('shown.bs.modal', function() {{
   mapLayers = [];
 
   const t    = allTracks[pendingIdx];
+
+  // Basiskarte je Track wählen: eigene CyclOSM innerhalb, sonst OSM-Fallback
+  const base = baseLayer(insideCoverage(t.coords));
+  if (activeBase && activeBase !== base) leafletMap.removeLayer(activeBase);
+  if (!leafletMap.hasLayer(base)) base.addTo(leafletMap);
+  activeBase = base;
+
   const line = L.polyline(t.coords, {{color:'#2c6e49', weight:4, opacity:.85}});
   mapLayers.push(line.addTo(leafletMap));
 

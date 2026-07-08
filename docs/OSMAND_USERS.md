@@ -24,12 +24,13 @@ Sobald du 15 min lang keinen Punkt mehr sendest (Tour vorbei), wird die Session
 serverseitig als `YYYY-MM-DD_HH-MM_Wochentag.gpx` abgeschlossen und erscheint
 nach dem nächsten stündlichen Lauf im Report. Kein Export, kein Teilen nötig.
 
-## B) Manuell: aufgezeichnete GPX hochladen
+## B) Manuell: aufgezeichnete GPX hochladen (kein Setup)
 Wenn du lieber die fertige OsmAnd-GPX schickst (mit exakter Höhe):
 
-- OsmAnd → **Meine Orte → Tracks → Track → Teilen/Export → GPX**
-- die Datei auf der Upload-Seite auswählen → hochladen
-  (token-frei, POST an `gpx_upload.php`).
+- **Upload-Seite im Browser:** https://heissa.de/web1/gpx_share.php
+  → Datei(en) ablegen/auswählen, optional Name eintragen, fertig.
+- Track holst du aus OsmAnd via **Meine Orte → Tracks → Track → Teilen/Export → GPX**.
+- Der optionale Name erscheint im Report/Feed als „· von <Name>".
 
 OsmAnd benennt seine Tracks bereits als `2026-05-09_09-06_Sat.gpx` — genau das
 Format, das der Report fürs Datum parst. Nichts umbenennen.

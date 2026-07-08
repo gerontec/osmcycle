@@ -32,9 +32,11 @@ foreach ($tracks as $t) {
              ? $t['ele_start'] . '→' . $t['ele_end'] . ' m' : null;
     $kmh   = isset($t['kmh']) && $t['kmh'] ? number_format($t['kmh'], 1, ',', '.') . ' km/h' : null;
 
+    $by    = !empty($t['by']) ? $t['by'] : null;
     $stats = implode(', ', array_filter([$dist, $hm, $ele, $kmh]));
-    $title = $place . ' – ' . ($t['date_str'] ?? $day);
+    $title = $place . ' – ' . ($t['date_str'] ?? $day) . ($by ? ' · ' . $by : '');
     $desc  = 'Tour ab ' . $place . ' am ' . ($t['date_str'] ?? $day)
+           . ($by ? ' (von ' . $by . ')' : '')
            . ($stats ? '. ' . $stats : '') . '.';
 
     // Deep-Link auf das passende Jahr/Monat-Filterset des Reports
