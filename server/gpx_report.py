@@ -605,9 +605,9 @@ const mapModalEl = document.getElementById('mapModal');
 mapModalEl.addEventListener('shown.bs.modal', function() {{
   if (!leafletMap) {{
     leafletMap = L.map('leaflet-map');
-    L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      maxZoom: 19
+    L.tileLayer('https://tmind.de/maps/tile.php?z={{z}}&x={{x}}&y={{y}}', {{
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, <a href="https://www.cyclosm.org/">CyclOSM</a>',
+      maxZoom: 14, maxNativeZoom: 14
     }}).addTo(leafletMap);
   }}
   leafletMap.invalidateSize();
