@@ -129,10 +129,15 @@ class OSMCycleApp(App):
         self._centered = False
 
         self.status = Label(text="GPS: warte…", size_hint=(None, None),
-                            size=(560, 84), pos_hint={"x": 0.01, "top": 0.99},
-                            color=(0, 0, 0, 1), halign="left", valign="top",
-                            font_size="15sp", text_size=(560, 84))
+                            size=(560, 34), pos_hint={"x": 0.01, "top": 0.99},
+                            color=(0, 0, 0, 1), halign="left", valign="middle",
+                            font_size="15sp", text_size=(560, 34))
         root.add_widget(self.status)
+        self.ele_lbl = Label(text="", size_hint=(None, None),
+                             size=(560, 34), pos_hint={"x": 0.01, "top": 0.955},
+                             color=(0, 0, 0, 1), halign="left", valign="middle",
+                             font_size="15sp", text_size=(560, 34))
+        root.add_widget(self.ele_lbl)
 
         # REC (bottom-left)
         self.rec_btn = ToggleButton(text="● REC", size_hint=(None, None),
@@ -343,8 +348,9 @@ class OSMCycleApp(App):
         if not self._centered:            # centre once so the arrow is on-screen
             self._centered = True
             self.mapview.center_on(lat, lon)
+        self.ele_lbl.text = self._ele_line()          # altitude line (always)
         if not self.recorder.recording:
-            self.status.text = f"{lat:.5f}, {lon:.5f}\n{self._ele_line()}"
+            self.status.text = f"{lat:.5f}, {lon:.5f}"
 
     def _ele_line(self):
         return f"Höhe: {self.last_ele:.0f} m" if self.last_ele is not None else "Höhe: —"
@@ -368,7 +374,7 @@ class OSMCycleApp(App):
         self._update(lat, lon, ele, bearing)      # keep the arrow fresh
         self.recorder.add(lat, lon, ele)
         self.track_layer.add_point(lat, lon)      # draws the line + a dot
-        self.status.text = f"REC · {len(self.recorder.points)} Punkte\n{self._ele_line()}"
+        self.status.text = f"REC · {len(self.recorder.points)} Punkte"
 
     def center_on_me(self, *_):
         if self.last_lat is not None:
