@@ -237,6 +237,12 @@ class OSMCycleApp(App):
                              color=(0, 0, 0, 1), halign="left", valign="middle",
                              font_size="15sp", text_size=(560, 34))
         root.add_widget(self.ele_lbl)
+        # background offline-map download progress (empty unless downloading)
+        self.dl_lbl = Label(text="", size_hint=(None, None),
+                            size=(560, 28), pos_hint={"x": 0.01, "top": 0.918},
+                            color=(0.1, 0.42, 0.15, 1), halign="left", valign="middle",
+                            font_size="13sp", text_size=(560, 28))
+        root.add_widget(self.dl_lbl)
 
         # REC (bottom-left)
         self.rec_btn = ToggleButton(text="● REC", size_hint=(None, None),
@@ -258,13 +264,33 @@ class OSMCycleApp(App):
         root.add_widget(self.center_btn)
 
         Clock.schedule_once(lambda dt: self.start_gps(), 1)
-        if not mbt:                       # new user: offer the offline map download
-            Clock.schedule_once(lambda dt: self._offer_download(), 1.5)
+        if not mbt:                       # no offline map yet → fetch it
+            Clock.schedule_once(lambda dt: self._auto_get_map(), 1.5)
         # once/day: push recorded tracks to the public heissa.de report
         threading.Thread(target=upload_tracks_daily, daemon=True).start()
         return root
 
     # --- first-run offline-map download ----------------------------------
+    def _is_metered(self):
+        """True on mobile data / metered WiFi (or if unknown) — used to avoid
+        auto-pulling the ~2.4 GB map over a cellular plan."""
+        try:
+            from jnius import autoclass
+            Context = autoclass("android.content.Context")
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            cm = PythonActivity.mActivity.getSystemService(Context.CONNECTIVITY_SERVICE)
+            return bool(cm.isActiveNetworkMetered())
+        except Exception:
+            return True
+
+    def _auto_get_map(self):
+        """No offline map yet: auto-download on WiFi (non-blocking, app stays
+        usable via online streaming); on mobile data ask first (2.4 GB)."""
+        if self._is_metered():
+            self._offer_download()
+        else:
+            self._start_download(blocking=False)
+
     def _offer_download(self):
         box = BoxLayout(orientation="vertical", spacing=12, padding=16)
         box.add_widget(Label(
@@ -282,11 +308,15 @@ class OSMCycleApp(App):
         no.bind(on_release=lambda b: self._dlg.dismiss())
         self._dlg.open()
 
-    def _start_download(self):
-        self._prog_lbl = Label(text="0 %", font_size="30sp")
-        self._prog = Popup(title="Karte wird geladen…", content=self._prog_lbl,
-                           size_hint=(0.9, 0.3), auto_dismiss=False)
-        self._prog.open()
+    def _start_download(self, blocking=True):
+        if blocking:
+            self._prog_lbl = Label(text="0 %", font_size="30sp")
+            self._prog = Popup(title="Karte wird geladen…", content=self._prog_lbl,
+                               size_hint=(0.9, 0.3), auto_dismiss=False)
+            self._prog.open()
+        else:                                  # WiFi auto: progress in the label
+            self._prog = None
+            self.dl_lbl.text = "Karte lädt… 0 %"
         threading.Thread(target=self._download_thread, daemon=True).start()
 
     def _download_thread(self):
@@ -317,13 +347,17 @@ class OSMCycleApp(App):
 
     def _progress(self, done, total):
         mb = done // 1048576
-        if total:
-            self._prog_lbl.text = f"{done * 100 // total} %  ({mb} / {total // 1048576} MB)"
+        txt = (f"{done * 100 // total} %  ({mb} / {total // 1048576} MB)"
+               if total else f"{mb} MB")
+        if getattr(self, "_prog", None):
+            self._prog_lbl.text = txt
         else:
-            self._prog_lbl.text = f"{mb} MB"
+            self.dl_lbl.text = "Karte lädt… " + txt
 
     def _download_done(self, dest):
-        self._prog.dismiss()
+        if getattr(self, "_prog", None):
+            self._prog.dismiss()
+        self.dl_lbl.text = ""
         self.mapview.map_source = HybridMapSource(
             mbtiles_path=dest, url=ONLINE_URL, cache_key="cyclosm",
             min_zoom=2, max_zoom=14, tile_size=256, image_ext="png",
@@ -331,8 +365,9 @@ class OSMCycleApp(App):
         self.status.text = "Offline-Karte geladen"
 
     def _download_failed(self, msg):
-        self._prog.dismiss()
-        self.status.text = "Download fehlgeschlagen"
+        if getattr(self, "_prog", None):
+            self._prog.dismiss()
+        self.dl_lbl.text = "Karten-Download fehlgeschlagen (später erneut)"
 
     # --- layer menu (multi-select) ---------------------------------------
     def open_layers(self, *_):
