@@ -255,15 +255,42 @@ class OSMCycleApp(App):
                                  Permission.ACCESS_COARSE_LOCATION])
         except Exception:
             pass
+        self._gps_on = False
+        self._gps_configured = False
+        self._gps_start()
+        # show the arrow immediately from the last known fix (also works indoors)
+        self._show_last_known()
+
+    def _gps_start(self):
+        """Battery-friendly live GPS: 3 s / 5 m (was 1 s / 1 m)."""
         try:
             from plyer import gps
-            gps.configure(on_location=self.on_location)
-            gps.start(minTime=1000, minDistance=1)
+            if not self._gps_configured:
+                gps.configure(on_location=self.on_location)
+                self._gps_configured = True
+            gps.start(minTime=3000, minDistance=5)
+            self._gps_on = True
             self.status.text = "GPS: aktiv"
         except Exception as e:
             self.status.text = f"GPS n/v ({e})"
-        # show the arrow immediately from the last known fix (also works indoors)
-        self._show_last_known()
+
+    def _gps_stop(self):
+        try:
+            from plyer import gps
+            gps.stop()
+        except Exception:
+            pass
+        self._gps_on = False
+
+    def on_pause(self):
+        # release GPS in the background to save battery — unless recording a track
+        if not self.recorder.recording:
+            self._gps_stop()
+        return True
+
+    def on_resume(self):
+        if not getattr(self, "_gps_on", False):
+            self._gps_start()
 
     def _read_location(self):
         """Current fix straight from Android LocationManager. Works even when the
