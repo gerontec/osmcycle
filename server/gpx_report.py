@@ -20,6 +20,7 @@ from pathlib import Path
 # ── Konfiguration ────────────────────────────────────────────────────────────
 GPX_DIR     = ["/home/gh/syncthing/media", "/home/gh/osmand-tracks", "/var/www/web1/gpx_uploads"]
 REPORT_PATH = "/var/www/web1/gpx_report.php"
+JSON_PATH   = "/var/www/web1/gpx_report.json"   # sidecar for rss_gpx.php
 COP_CACHE   = "/home/gh/syncthing/copernicus_cache"
 
 # Bounding-Box Bayern + Tirol
@@ -388,6 +389,7 @@ function fmt_dur($h)  {{
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GPX-Auswertung</title>
+  <link rel="alternate" type="application/rss+xml" title="OSMCycle · Aufgezeichnete Touren" href="rss_gpx.php">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet">
   <style>
@@ -648,6 +650,11 @@ function showTrack(idx) {{
     with open(REPORT_PATH, 'w', encoding='utf-8') as f:
         f.write(php)
     print(f"Report geschrieben: {REPORT_PATH}")
+
+    # JSON-Sidecar für rss_gpx.php (gleiche Datenquelle wie der HTML-Report)
+    with open(JSON_PATH, 'w', encoding='utf-8') as f:
+        _json.dump(php_data, f, ensure_ascii=False)
+    print(f"JSON geschrieben: {JSON_PATH}")
 
 
 # ── Hauptprogramm ─────────────────────────────────────────────────────────────
