@@ -9,6 +9,7 @@ Hiking trails and recorded tracks are shown as an efficient GPX overlay.
 import glob
 import os
 import shutil
+import threading
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -26,8 +27,25 @@ from track import (TrackLayer, TrackRecorder, PositionLayer, GpxLayer,
                    PeaksLayer, gpx_dir)
 
 MBTILES_NAME = "alpen.mbtiles"
-ONLINE_URL = "http://[2a02:810d:4117:7300:ce96:e5ff:fe01:e09c]:8280/tiles/cyclosm/{z}/{x}/{y}.png"
+# Public tile server (netcup) — works out of the box for new users, no home
+# server / IPv6 needed. Serves z6-14 from CyclOSM_Alpen.sqlitedb via tile.php.
+ONLINE_URL = "https://tmind.de/maps/tile.php?z={z}&x={x}&y={y}"
+# Offline map for first-run download (new users, no map yet)
+MBTILES_URL = "https://tmind.de/maps/alpen.mbtiles"
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def mbtiles_target():
+    """Writable destination for the downloaded offline map (app-private dir is
+    always writable; find_mbtiles() checks it too)."""
+    try:
+        from android import mActivity  # type: ignore
+        ext = mActivity.getExternalFilesDir(None)
+        if ext:
+            return os.path.join(ext.getAbsolutePath(), MBTILES_NAME)
+    except Exception:
+        pass
+    return os.path.join(os.path.expanduser("~"), MBTILES_NAME)
 
 
 def find_mbtiles():
@@ -81,12 +99,12 @@ class OSMCycleApp(App):
         mbt = find_mbtiles()
         if mbt:
             source = HybridMapSource(mbtiles_path=mbt, url=ONLINE_URL,
-                                     cache_key="cyclosm", min_zoom=2, max_zoom=18,
+                                     cache_key="cyclosm", min_zoom=2, max_zoom=14,
                                      tile_size=256, image_ext="png",
                                      attribution="© OpenStreetMap, CyclOSM")
         else:
             source = MapSource(url=ONLINE_URL, cache_key="cyclosm", min_zoom=2,
-                               max_zoom=18, tile_size=256, image_ext="png",
+                               max_zoom=14, tile_size=256, image_ext="png",
                                attribution="© OpenStreetMap, CyclOSM")
 
         root = FloatLayout()
@@ -135,7 +153,79 @@ class OSMCycleApp(App):
         root.add_widget(self.center_btn)
 
         Clock.schedule_once(lambda dt: self.start_gps(), 1)
+        if not mbt:                       # new user: offer the offline map download
+            Clock.schedule_once(lambda dt: self._offer_download(), 1.5)
         return root
+
+    # --- first-run offline-map download ----------------------------------
+    def _offer_download(self):
+        box = BoxLayout(orientation="vertical", spacing=12, padding=16)
+        box.add_widget(Label(
+            text="Offline-Karte (~2,4 GB) jetzt herunterladen?\n"
+                 "Empfohlen im WLAN. Danach voll offline nutzbar.",
+            font_size="26sp", halign="center"))
+        row = BoxLayout(size_hint_y=None, height=110, spacing=12)
+        yes = Button(text="Laden", font_size="30sp")
+        no = Button(text="Später", font_size="30sp")
+        row.add_widget(yes)
+        row.add_widget(no)
+        box.add_widget(row)
+        self._dlg = Popup(title="Karte laden", content=box, size_hint=(0.9, 0.5))
+        yes.bind(on_release=lambda b: (self._dlg.dismiss(), self._start_download()))
+        no.bind(on_release=lambda b: self._dlg.dismiss())
+        self._dlg.open()
+
+    def _start_download(self):
+        self._prog_lbl = Label(text="0 %", font_size="30sp")
+        self._prog = Popup(title="Karte wird geladen…", content=self._prog_lbl,
+                           size_hint=(0.9, 0.3), auto_dismiss=False)
+        self._prog.open()
+        threading.Thread(target=self._download_thread, daemon=True).start()
+
+    def _download_thread(self):
+        import requests
+        dest = mbtiles_target()
+        tmp = dest + ".part"
+        try:
+            r = requests.get(MBTILES_URL, stream=True, timeout=60)
+            r.raise_for_status()
+            total = int(r.headers.get("content-length", 0))
+            done = 0
+            with open(tmp, "wb") as f:
+                for chunk in r.iter_content(262144):
+                    if not chunk:
+                        continue
+                    f.write(chunk)
+                    done += len(chunk)
+                    Clock.schedule_once(
+                        lambda dt, d=done, t=total: self._progress(d, t), 0)
+            os.replace(tmp, dest)
+            Clock.schedule_once(lambda dt: self._download_done(dest), 0)
+        except Exception as e:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            Clock.schedule_once(lambda dt, e=str(e): self._download_failed(e), 0)
+
+    def _progress(self, done, total):
+        mb = done // 1048576
+        if total:
+            self._prog_lbl.text = f"{done * 100 // total} %  ({mb} / {total // 1048576} MB)"
+        else:
+            self._prog_lbl.text = f"{mb} MB"
+
+    def _download_done(self, dest):
+        self._prog.dismiss()
+        self.mapview.map_source = HybridMapSource(
+            mbtiles_path=dest, url=ONLINE_URL, cache_key="cyclosm",
+            min_zoom=2, max_zoom=14, tile_size=256, image_ext="png",
+            attribution="© OpenStreetMap, CyclOSM")
+        self.status.text = "Offline-Karte geladen"
+
+    def _download_failed(self, msg):
+        self._prog.dismiss()
+        self.status.text = "Download fehlgeschlagen"
 
     # --- layer menu (multi-select) ---------------------------------------
     def open_layers(self, *_):

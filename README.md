@@ -6,6 +6,30 @@ contour lines, hillshade and MTB-scale colouring** (like openstreetmap.org's
 **records GPS tracks as GPX**, and can overlay three long-distance hiking
 trails. Coverage: **Bayern, Tirol, Südtirol and Kärnten**.
 
+## Fertige Karte laden — einfachster Weg (ohne selbst zu rendern)
+
+Vorgerenderte Offline-Karten liegen zum Download bereit:
+
+**➡ https://tmind.de/maps/**
+
+| Datei | Gebiet | Größe |
+|-------|--------|-------|
+| `CyclOSM_Alpen.sqlitedb` | Bayern + Tirol + Südtirol + Kärnten (all-in-one) | 2,4 GB |
+| `CyclOSM_Bayern-Tirol.sqlitedb` | Bayern + Tirol | 329 MB |
+| `CyclOSM_Kaernten.sqlitedb` | Kärnten | 36 MB |
+| `CyclOSM_Suedtirol.sqlitedb` | Südtirol | 28 MB |
+
+**Neue Nutzer — der einfachste Weg:**
+
+1. **Nur die App installieren** (`osmcycle-*.apk`). Sie **streamt die Karte direkt von
+   netcup** (`https://tmind.de/maps/tile.php`, z6–14) — kein 2‑GB‑Download, kein OsmAnd,
+   keine Einrichtung. Betrachtete Kacheln werden gecacht und funktionieren danach offline.
+2. Voll offline / OsmAnd: `CyclOSM_Alpen.sqlitedb` von obigem Link laden, nach
+   `Android/data/net.osmand/files/tiles/` legen, dann *Karte konfigurieren → Kartenquelle*.
+
+Der Tile‑Server `maps/tile.php` liefert die Kacheln aus der `sqlitedb` — öffentlich, mit
+TLS, unabhängig vom Heim‑Renderserver.
+
 ```
 OSM (Geofabrik) ─▶ PostGIS (osm2pgsql) ─┐
 DEM (viewfinderpanoramas via pyhgtmap) ─┼▶ Mapnik / CyclOSM CartoCSS
