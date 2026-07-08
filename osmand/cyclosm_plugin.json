@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "type": "PLUGIN",
+  "items": [
+    {
+      "type": "PLUGIN",
+      "pluginId": "osmcycle.cyclosm",
+      "name": "OSMCycle · CyclOSM",
+      "description": "CyclOSM-Radkarte (Bayern, Tirol, Südtirol, Kärnten) mit Höhenlinien + Anleitung, wie du deine aufgezeichneten Touren automatisch zum OSMCycle-Report schickst.",
+      "iconNames": ["ic_action_bicycle_dark"],
+      "imageNames": []
+    },
+    {
+      "type": "MAP_SOURCES",
+      "items": [
+        {
+          "sql": false,
+          "name": "CyclOSM (OSMCycle)",
+          "url": "https://tmind.de/maps/tile.php?z={0}&x={1}&y={2}",
+          "randoms": "",
+          "ellipsoid": false,
+          "inverted_y": false,
+          "referer": "",
+          "timesupported": false,
+          "expire": -1,
+          "minzoom": 6,
+          "maxzoom": 14,
+          "tileSize": 256,
+          "ext": ".png",
+          "avgSize": 32000
+        }
+      ]
+    }
+  ]
+}
