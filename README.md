@@ -93,11 +93,47 @@ from the server on demand (`hybridsource.py`). Features:
 - CyclOSM base with **Höhenlinien + Hillshade + MTB-Skala**.
 - **Position arrow** that rotates to the GPS heading + **◎ centre-on-me** button
   (shows the last known fix immediately, auto-centres on the first live fix).
-- **● REC** GPS track recording → **GPX 1.1** in
-  `…/Android/data/org.gerontec.osmcycle/files/tracks/track_<ts>.gpx`.
+- **● REC** GPS track recording → **GPX 1.1** in the public folder
+  `/sdcard/osmcycle/track_<ts>.gpx`. Recording follows a **live Android
+  `LocationListener`** (fresh fixes, not the stale last-known cache), so a real
+  ride is captured at full length instead of collapsing to a stationary blob.
+- **Auto-upload to the online report** — see below; no Syncthing, no PC.
 - **≡ Layer** menu toggles the 3 hiking trails (🔴 Karnischer, 🔵 Maximilians,
   🟢 Tiroler Höhenweg), drawn client-side from `wanderwege.json` (offline,
   viewport-culled).
+
+### GPX-Upload → Online-Report (kein Syncthing nötig)
+
+Aufgezeichnete Tracks landen **direkt vom Handy** im öffentlichen Report auf
+**https://heissa.de/web1/gpx_report.php** — komplett ohne Syncthing, ohne PC,
+ohne Kabel.
+
+```
+App (Hintergrund-Thread, max. 1×/24 h beim Öffnen)
+  │  HTTP POST  (multipart, nur track_*.gpx, ≤10 MB)
+  ▼
+https://heissa.de/web1/gpx_upload.php      ← öffentlich, ohne Token, jeder darf
+  │  speichert nach
+  ▼
+/var/www/web1/gpx_uploads/<YYYY-MM-DD_HH-MM_Wochentag>.gpx
+  │  stündlicher Cron scannt den Ordner (gpx_report.py, GPX_DIR)
+  ▼
+https://heissa.de/web1/gpx_report.php      ← Bootstrap+Leaflet, Karte + Tabelle
+```
+
+- **Wann:** ein Daemon-Thread startet beim App-Öffnen und lädt höchstens
+  **einmal pro 24 h** hoch (Stempeldatei `.last_upload` im GPX-Ordner). Kein
+  Dienst im Hintergrund bei geschlossener App — einmal öffnen genügt.
+- **Was:** nur eigene Aufnahmen (`track_*.gpx`), umbenannt in die Konvention
+  `YYYY-MM-DD_HH-MM_Wochentag.gpx`, die der Report für die Datums­spalte parst.
+  Die gebündelten Demo-Routen werden **nicht** hochgeladen.
+- **Kein Sicherheitscheck** (Wunsch: jeder darf uploaden) — der Endpoint prüft
+  nur `.gpx` + Größe (≤10 MB), kein Token, keine Anmeldung.
+- **Über 4G erlaubt** (GPX ist winzig). Fehlschläge (offline) werden still
+  ignoriert und beim nächsten Öffnen erneut versucht.
+
+> Der Report filtert Tracks **< 1 km / < 2 hm** aus (Rausch-/Drift-Schutz), also
+> erscheinen nur echte Fahrten.
 
 Build + install:
 
