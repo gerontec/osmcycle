@@ -32,6 +32,31 @@ Vorgerenderte Offline-Karten liegen zum Download bereit:
 1. **Nur die App installieren** (`osmcycle-*.apk`). Sie **streamt die Karte direkt von
    netcup** (`https://tmind.de/maps/tile.php`, z6–14) — kein 2‑GB‑Download, kein OsmAnd,
    keine Einrichtung. Betrachtete Kacheln werden gecacht und funktionieren danach offline.
+
+### 📲 App herunterladen & installieren
+
+<p align="center">
+  <img src="docs/osmcycle_apk_qr.png" alt="QR-Code: neueste OSMCycle-APK laden" width="220"><br>
+  <b>Handy-Kamera auf den QR halten → lädt automatisch die neueste APK</b><br>
+  (Direktlink: <a href="https://heissa.de/web1/get_apk.php">heissa.de/web1/get_apk.php</a> —
+  leitet immer auf die aktuellste Release-APK)
+</p>
+
+- **APK (neueste Version):**
+  **➡ https://github.com/gerontec/osmcycle/releases/latest** → die Datei
+  `osmcycle-vX.apk` antippen. Spiegel ohne GitHub:
+  **https://tmind.de/maps/apk/osmcycle-v0.9.apk**
+- **Auto-Update:** [Obtainium](https://github.com/ImranR98/Obtainium) installieren →
+  „Add App" → obige Repo-URL. Holt jede neue Release automatisch.
+
+**Installation ohne Entwicklermodus** (normaler Weg, kein USB/ADB nötig):
+Android fragt beim ersten Öffnen der APK, ob es „aus dieser Quelle installieren"
+darf → **erlauben** (Einstellung *„Unbekannte Apps installieren"* für den Browser
+bzw. Dateimanager). Entwickleroptionen / USB-Debugging braucht man **nur** für
+`adb install`. Der Download-und-Antippen-Weg funktioniert auch auf Android 16 ohne
+Entwicklermodus — es ist nur die einmalige Quellen-Freigabe pro Browser. (Manche
+Hersteller-ROMs, z. B. MIUI, zeigen zusätzlich einen eigenen „Über USB / unbekannte
+Apps"-Dialog — einfach bestätigen.)
 2. Voll offline / OsmAnd: `CyclOSM_Alpen.sqlitedb` von obigem Link laden, nach
    `Android/data/net.osmand/files/tiles/` legen, dann *Karte konfigurieren → Kartenquelle*.
 
