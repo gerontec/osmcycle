@@ -129,8 +129,9 @@ class OSMCycleApp(App):
         self._centered = False
 
         self.status = Label(text="GPS: warte…", size_hint=(None, None),
-                            size=(560, 40), pos_hint={"x": 0.01, "top": 0.99},
-                            color=(0, 0, 0, 1), halign="left", font_size="15sp")
+                            size=(560, 84), pos_hint={"x": 0.01, "top": 0.99},
+                            color=(0, 0, 0, 1), halign="left", valign="top",
+                            font_size="15sp", text_size=(560, 84))
         root.add_widget(self.status)
 
         # REC (bottom-left)
@@ -261,18 +262,34 @@ class OSMCycleApp(App):
         # show the arrow immediately from the last known fix (also works indoors)
         self._show_last_known()
 
+    def _gps_interval(self):
+        return 10000 if self.recorder.recording else 60000   # 10 s rec / 60 s idle
+
     def _gps_start(self):
-        """Battery-friendly live GPS: 3 s / 5 m (was 1 s / 1 m)."""
+        """Battery-friendly GPS + 60 s readout poll (plyer's callback is
+        unreliable on Android 12+, so we poll the last-known fix ourselves)."""
         try:
             from plyer import gps
             if not self._gps_configured:
                 gps.configure(on_location=self.on_location)
                 self._gps_configured = True
-            gps.start(minTime=3000, minDistance=5)
+            gps.start(minTime=self._gps_interval(), minDistance=5)
             self._gps_on = True
             self.status.text = "GPS: aktiv"
         except Exception as e:
             self.status.text = f"GPS n/v ({e})"
+        if not getattr(self, "_disp_ev", None):
+            self._disp_ev = Clock.schedule_interval(self._loc_tick, 60)
+        self._loc_tick(0)
+
+    def _gps_restart(self):
+        try:
+            from plyer import gps
+            gps.stop()
+            gps.start(minTime=self._gps_interval(), minDistance=5)
+            self._gps_on = True
+        except Exception:
+            pass
 
     def _gps_stop(self):
         try:
@@ -281,6 +298,9 @@ class OSMCycleApp(App):
         except Exception:
             pass
         self._gps_on = False
+        if getattr(self, "_disp_ev", None):
+            self._disp_ev.cancel()
+            self._disp_ev = None
 
     def on_pause(self):
         # release GPS in the background to save battery — unless recording a track
@@ -334,10 +354,18 @@ class OSMCycleApp(App):
             self._centered = True
             self.mapview.center_on(lat, lon)
         if not self.recorder.recording:
-            self.status.text = f"{lat:.5f}, {lon:.5f}{self._ele_str()}"
+            self.status.text = f"{lat:.5f}, {lon:.5f}\n{self._ele_line()}"
 
-    def _ele_str(self):
-        return f"  ⛰ {self.last_ele:.0f} m" if self.last_ele is not None else ""
+    def _ele_line(self):
+        return f"Höhe: {self.last_ele:.0f} m" if self.last_ele is not None else "Höhe: —"
+
+    def _loc_tick(self, dt):
+        """Idle readout refresh (60 s). Recording is handled by _rec_tick (10 s)."""
+        if self.recorder.recording:
+            return
+        fix = self._read_location()
+        if fix:
+            self._update(*fix)
 
     def _rec_tick(self, dt):
         """Every 10 s while recording: sample the position via LocationManager,
@@ -350,7 +378,7 @@ class OSMCycleApp(App):
         self._update(lat, lon, ele, bearing)      # keep the arrow fresh
         self.recorder.add(lat, lon, ele)
         self.track_layer.add_point(lat, lon)      # draws the line + a dot
-        self.status.text = f"REC · {len(self.recorder.points)} Punkte{self._ele_str()}"
+        self.status.text = f"REC · {len(self.recorder.points)} Punkte\n{self._ele_line()}"
 
     def center_on_me(self, *_):
         if self.last_lat is not None:
@@ -363,6 +391,7 @@ class OSMCycleApp(App):
             self.track_layer.clear()
             self.rec_btn.text = "■ STOP"
             self.status.text = "REC gestartet"
+            self._gps_restart()                   # 10 s fixes while recording
             self._rec_ev = Clock.schedule_interval(self._rec_tick, 10)
             self._rec_tick(0)                     # drop the first dot immediately
         else:
@@ -373,6 +402,7 @@ class OSMCycleApp(App):
             self.rec_btn.text = "● REC"
             self.status.text = (f"GPX: {os.path.basename(path)}" if path
                                 else "Kein Track")
+            self._gps_restart()                   # back to 60 s idle
 
 
 if __name__ == "__main__":
