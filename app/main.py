@@ -32,7 +32,48 @@ MBTILES_NAME = "alpen.mbtiles"
 ONLINE_URL = "https://tmind.de/maps/tile.php?z={z}&x={x}&y={y}"
 # Offline map for first-run download (new users, no map yet)
 MBTILES_URL = "https://tmind.de/maps/alpen.mbtiles"
+# Public GPX drop — recorded tracks are uploaded here once/day so they show up
+# on https://heissa.de/web1/gpx_report.php. No token, anyone may upload.
+GPX_UPLOAD_URL = "https://heissa.de/web1/gpx_upload.php"
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+# A live LocationListener: getLastKnownLocation() returns a *stale cached* fix
+# that barely moves, which collapsed real rides to a near-stationary blob. This
+# streams fresh fixes straight from the GPS provider so recording follows the
+# actual route.
+try:
+    from jnius import PythonJavaClass, java_method, autoclass  # type: ignore
+    _HAVE_JNIUS = True
+
+    class _LocationListener(PythonJavaClass):
+        __javainterfaces__ = ['android/location/LocationListener']
+        __javacontext__ = 'app'
+
+        def __init__(self, cb):
+            super().__init__()
+            self._cb = cb
+
+        @java_method('(Landroid/location/Location;)V')
+        def onLocationChanged(self, location):
+            try:
+                self._cb(location)
+            except Exception:
+                pass
+
+        @java_method('(Ljava/lang/String;ILandroid/os/Bundle;)V')
+        def onStatusChanged(self, provider, status, extras):
+            pass
+
+        @java_method('(Ljava/lang/String;)V')
+        def onProviderEnabled(self, provider):
+            pass
+
+        @java_method('(Ljava/lang/String;)V')
+        def onProviderDisabled(self, provider):
+            pass
+except Exception:
+    _HAVE_JNIUS = False
 
 
 def mbtiles_target():
@@ -92,6 +133,64 @@ def seed_gpx():
                 shutil.copy(f, t)
             except Exception:
                 pass
+
+
+def _report_name(fname):
+    """Rename own recordings (track_YYYY-MM-DD_HH-MM-SS.gpx) to the
+    YYYY-MM-DD_HH-MM_Weekday.gpx convention gpx_report.py parses for its date
+    column. Anything else is uploaded under its original name."""
+    import re
+    from datetime import datetime
+    m = re.match(r"track_(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-\d{2}\.gpx$", fname)
+    if not m:
+        return fname
+    try:
+        d = datetime.strptime(m.group(1), "%Y-%m-%d")
+        return f"{m.group(1)}_{m.group(2)}-{m.group(3)}_{d.strftime('%a')}.gpx"
+    except Exception:
+        return fname
+
+
+def upload_tracks_daily():
+    """Once per day, POST own recorded tracks (track_*.gpx) to the public
+    heissa.de endpoint so they appear on the online report. Runs in a background
+    daemon thread; tolerant of failure (offline, no server), retries next day."""
+    import time
+    try:
+        import requests
+    except Exception as e:
+        print(f"[upload] no requests: {e}")
+        return
+    d = gpx_dir()
+    stamp = os.path.join(d, ".last_upload")
+    try:
+        if os.path.exists(stamp) and (time.time() - os.path.getmtime(stamp)) < 86400:
+            print("[upload] skip: uploaded within last 24h")
+            return
+    except Exception:
+        pass
+    tracks = sorted(glob.glob(os.path.join(d, "track_*.gpx")))
+    print(f"[upload] dir={d} tracks={len(tracks)} -> {GPX_UPLOAD_URL}")
+    sent = 0
+    for path in tracks:
+        up = _report_name(os.path.basename(path))
+        try:
+            with open(path, "rb") as fh:
+                r = requests.post(GPX_UPLOAD_URL,
+                                  files={"file": (up, fh, "application/gpx+xml")},
+                                  timeout=30)
+            print(f"[upload] {up} -> HTTP {r.status_code} {r.text[:40]}")
+            if r.status_code == 200:
+                sent += 1
+        except Exception as e:
+            print(f"[upload] fail {up}: {e}")
+    if sent:
+        try:
+            with open(stamp, "w") as fh:
+                fh.write(str(int(time.time())))
+        except Exception:
+            pass
+    print(f"[upload] done, {sent} sent")
 
 
 class OSMCycleApp(App):
@@ -161,6 +260,8 @@ class OSMCycleApp(App):
         Clock.schedule_once(lambda dt: self.start_gps(), 1)
         if not mbt:                       # new user: offer the offline map download
             Clock.schedule_once(lambda dt: self._offer_download(), 1.5)
+        # once/day: push recorded tracks to the public heissa.de report
+        threading.Thread(target=upload_tracks_daily, daemon=True).start()
         return root
 
     # --- first-run offline-map download ----------------------------------
@@ -263,9 +364,55 @@ class OSMCycleApp(App):
             pass
         self._gps_on = False
         self._gps_configured = False
+        self._live_fix = None
+        self._loc_listener = None
+        self._ensure_loc_listener()
         self._gps_start()
         # show the arrow immediately from the last known fix (also works indoors)
         self._show_last_known()
+
+    def _ensure_loc_listener(self):
+        """Register our own LocationListener so recording follows live GPS
+        instead of the stale last-known cache. Idempotent; no-op off Android."""
+        if getattr(self, "_loc_listener", None) is not None or not _HAVE_JNIUS:
+            return
+        try:
+            Context = autoclass("android.content.Context")
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            self._lm = PythonActivity.mActivity.getSystemService(Context.LOCATION_SERVICE)
+            self._loc_listener = _LocationListener(self._on_new_location)
+            self._request_loc_updates()
+        except Exception:
+            self._loc_listener = None
+
+    def _request_loc_updates(self):
+        """(Re)subscribe the listener at a record-aware cadence: ~2 s while
+        recording (accurate track), 30 s idle (battery)."""
+        if not _HAVE_JNIUS or getattr(self, "_loc_listener", None) is None:
+            return
+        try:
+            Looper = autoclass("android.os.Looper")
+            looper = Looper.getMainLooper()
+            min_ms = 2000 if self.recorder.recording else 30000
+            self._lm.removeUpdates(self._loc_listener)
+            for prov in ("gps", "network"):
+                try:
+                    self._lm.requestLocationUpdates(prov, min_ms, 0.0,
+                                                    self._loc_listener, looper)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _on_new_location(self, location):
+        try:
+            self._live_fix = (
+                location.getLatitude(), location.getLongitude(),
+                location.getAltitude() if location.hasAltitude() else None,
+                location.getBearing() if location.hasBearing() else None,
+                location.getTime())
+        except Exception:
+            pass
 
     def _gps_interval(self):
         return 10000 if self.recorder.recording else 60000   # 10 s rec / 60 s idle
@@ -288,6 +435,7 @@ class OSMCycleApp(App):
         self._loc_tick(0)
 
     def _gps_restart(self):
+        self._request_loc_updates()               # match listener cadence to rec state
         try:
             from plyer import gps
             gps.stop()
@@ -308,24 +456,34 @@ class OSMCycleApp(App):
             self._disp_ev = None
 
     def _read_location(self):
-        """Current fix straight from Android LocationManager. Works even when the
-        plyer on_location callback never fires. Returns (lat, lon, ele, bearing)
-        or None."""
+        """Freshest fix available: the live LocationListener stream vs. each
+        provider's last-known, chosen by timestamp so a moving ride is actually
+        followed (last-known alone is stale and barely moves). Returns
+        (lat, lon, ele, bearing) or None."""
+        best = None
+        best_t = -1
+        live = getattr(self, "_live_fix", None)
+        if live is not None:
+            best = (live[0], live[1], live[2], live[3])
+            best_t = live[4]
         try:
             from jnius import autoclass
             Context = autoclass("android.content.Context")
             PythonActivity = autoclass("org.kivy.android.PythonActivity")
             lm = PythonActivity.mActivity.getSystemService(Context.LOCATION_SERVICE)
-            loc = (lm.getLastKnownLocation("gps")
-                   or lm.getLastKnownLocation("fused")
-                   or lm.getLastKnownLocation("network"))
-            if loc:
-                return (loc.getLatitude(), loc.getLongitude(),
-                        loc.getAltitude() if loc.hasAltitude() else None,
-                        loc.getBearing() if loc.hasBearing() else None)
+            for prov in ("gps", "fused", "network"):
+                try:
+                    loc = lm.getLastKnownLocation(prov)
+                except Exception:
+                    loc = None
+                if loc and loc.getTime() > best_t:
+                    best_t = loc.getTime()
+                    best = (loc.getLatitude(), loc.getLongitude(),
+                            loc.getAltitude() if loc.hasAltitude() else None,
+                            loc.getBearing() if loc.hasBearing() else None)
         except Exception:
             pass
-        return None
+        return best
 
     def _show_last_known(self):
         fix = self._read_location()
