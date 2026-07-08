@@ -1,0 +1,32 @@
+name: Build & Release APK
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build APK (pinned debug keystore for stable signature)
+        uses: ArtemSBulgakov/buildozer-action@v1
+        id: buildozer
+        with:
+          workdir: app
+          command: >
+            mkdir -p $HOME/.android &&
+            cp ../ci/debug.keystore $HOME/.android/debug.keystore &&
+            buildozer android debug
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.buildozer.outputs.filename }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
