@@ -453,6 +453,9 @@ class OSMCycleApp(App):
         self._dlg.open()
 
     def _start_download(self, blocking=True):
+        if getattr(self, "_dl_running", False):    # already downloading/resuming
+            return
+        self._dl_running = True
         if blocking:
             self._prog_lbl = Label(text="0 %", font_size="30sp")
             self._prog = Popup(title="Karte wird geladen…", content=self._prog_lbl,
@@ -463,31 +466,82 @@ class OSMCycleApp(App):
             self.dl_lbl.text = "Karte lädt… 0 %"
         threading.Thread(target=self._download_thread, daemon=True).start()
 
+    # Robust, resumable download (OsmAnd-style): the .part file is kept across
+    # failures and app restarts; each attempt resumes from the last byte via an
+    # HTTP Range request, with a bounded number of auto-retries and backoff.
+    MAP_DL_RETRIES = 12
+
     def _download_thread(self):
         import requests
+        import time
         dest = mbtiles_target()
         tmp = dest + ".part"
+        last_err = None
         try:
-            r = requests.get(MBTILES_URL, stream=True, timeout=60)
-            r.raise_for_status()
-            total = int(r.headers.get("content-length", 0))
-            done = 0
-            with open(tmp, "wb") as f:
-                for chunk in r.iter_content(262144):
-                    if not chunk:
-                        continue
-                    f.write(chunk)
-                    done += len(chunk)
+            for attempt in range(1, self.MAP_DL_RETRIES + 1):
+                try:
+                    if self._download_once(requests, tmp, dest):
+                        Clock.schedule_once(
+                            lambda dt: self._download_done(dest), 0)
+                        return
+                except Exception as e:                 # network drop / timeout
+                    last_err = str(e)
+                    have = 0
+                    try:
+                        have = os.path.getsize(tmp)
+                    except OSError:
+                        pass
                     Clock.schedule_once(
-                        lambda dt, d=done, t=total: self._progress(d, t), 0)
-            os.replace(tmp, dest)
-            Clock.schedule_once(lambda dt: self._download_done(dest), 0)
-        except Exception as e:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-            Clock.schedule_once(lambda dt, e=str(e): self._download_failed(e), 0)
+                        lambda dt, a=attempt, h=have:
+                        self._progress_retry(a, h), 0)
+                    time.sleep(min(30, 2 ** attempt))  # exponential backoff
+            # retries exhausted — keep the .part file so a later run resumes
+            Clock.schedule_once(
+                lambda dt, e=last_err: self._download_failed(e), 0)
+        finally:
+            self._dl_running = False
+
+    def _download_once(self, requests, tmp, dest):
+        """One resume attempt. Returns True when the file is complete."""
+        have = 0
+        try:
+            have = os.path.getsize(tmp)
+        except OSError:
+            have = 0
+        headers = {"Range": f"bytes={have}-"} if have else {}
+        r = requests.get(MBTILES_URL, stream=True, timeout=60, headers=headers)
+        # Whole file already on disk (server rejects the range as satisfied).
+        if r.status_code == 416:
+            r.close()
+            if os.path.exists(tmp):
+                os.replace(tmp, dest)
+                return True
+            return False
+        r.raise_for_status()
+        # If we asked to resume but the server ignored the Range (200 not 206),
+        # restart from scratch to avoid a corrupt (double-prefixed) file.
+        if have and r.status_code != 206:
+            have = 0
+        mode = "ab" if have else "wb"
+        cr = r.headers.get("content-range", "")
+        if "/" in cr:
+            total = int(cr.rsplit("/", 1)[1])
+        else:
+            total = int(r.headers.get("content-length", 0)) + have
+        done = have
+        with open(tmp, mode) as f:
+            for chunk in r.iter_content(262144):
+                if not chunk:
+                    continue
+                f.write(chunk)
+                done += len(chunk)
+                Clock.schedule_once(
+                    lambda dt, d=done, t=total: self._progress(d, t), 0)
+        # Only accept the file once every byte is present.
+        if total and os.path.getsize(tmp) < total:
+            raise IOError("incomplete: %d/%d" % (os.path.getsize(tmp), total))
+        os.replace(tmp, dest)
+        return True
 
     def _progress(self, done, total):
         mb = done // 1048576
@@ -497,6 +551,15 @@ class OSMCycleApp(App):
             self._prog_lbl.text = txt
         else:
             self.dl_lbl.text = "Karte lädt… " + txt
+
+    def _progress_retry(self, attempt, have):
+        mb = have // 1048576
+        txt = (f"Verbindung unterbrochen – neuer Versuch {attempt}"
+               f"/{self.MAP_DL_RETRIES} (bei {mb} MB)…")
+        if getattr(self, "_prog", None):
+            self._prog_lbl.text = txt
+        else:
+            self.dl_lbl.text = txt
 
     def _download_done(self, dest):
         if getattr(self, "_prog", None):
@@ -511,7 +574,8 @@ class OSMCycleApp(App):
     def _download_failed(self, msg):
         if getattr(self, "_prog", None):
             self._prog.dismiss()
-        self.dl_lbl.text = "Karten-Download fehlgeschlagen (später erneut)"
+        # The .part file is kept — the next start resumes where this stopped.
+        self.dl_lbl.text = "Karten-Download unterbrochen – wird später fortgesetzt"
 
     # --- layer menu (multi-select) ---------------------------------------
     def open_layers(self, *_):
