@@ -24,9 +24,10 @@ from kivy_garden.mapview import MapView, MapSource
 
 from hybridsource import HybridMapSource
 from track import (TrackLayer, TrackRecorder, PositionLayer, GpxLayer,
-                   PeaksLayer, gpx_dir)
+                   PeaksLayer, MastsLayer, gpx_dir)
 
 MBTILES_NAME = "alpen.mbtiles"
+MASTS_NAME = "sendemasten.json"        # EMF-Standorte (BNetzA), aus wagodb exportiert
 # Public tile server (netcup) — works out of the box for new users, no home
 # server / IPv6 needed. Serves z6-14 from CyclOSM_Alpen.sqlitedb via tile.php.
 ONLINE_URL = "https://tmind.de/maps/tile.php?z={z}&x={x}&y={y}"
@@ -220,6 +221,13 @@ class OSMCycleApp(App):
         self.mapview.add_layer(self.gpx_layer)
         self.peaks_layer = PeaksLayer([gpx_dir()])
         self.mapview.add_layer(self.peaks_layer)
+        # Gleiche Gipfel, 20 % groessere Schrift (Sehschwaeche). Teilt sich die
+        # geparsten Punkte mit dem Standard-Layer, statt die GPX erneut zu lesen.
+        self.peaks_big_layer = PeaksLayer([], font_size=PeaksLayer.FONT_SIZE * 1.2)
+        self.peaks_big_layer.peaks = self.peaks_layer.peaks
+        self.mapview.add_layer(self.peaks_big_layer)
+        self.masts_layer = MastsLayer(os.path.join(HERE, MASTS_NAME))
+        self.mapview.add_layer(self.masts_layer)
         self.pos_layer = PositionLayer()
         self.mapview.add_layer(self.pos_layer)
 
@@ -237,6 +245,7 @@ class OSMCycleApp(App):
                              color=(0, 0, 0, 1), halign="left", valign="middle",
                              font_size="15sp", text_size=(560, 34))
         root.add_widget(self.ele_lbl)
+        self.ele_lbl.text = self._ele_line()   # Kartengroesse schon vor dem GPS-Fix
         # background offline-map download progress (empty unless downloading)
         self.dl_lbl = Label(text="", size_hint=(None, None),
                             size=(560, 28), pos_hint={"x": 0.01, "top": 0.918},
@@ -253,7 +262,7 @@ class OSMCycleApp(App):
 
         # Layer menu (top-right) — multi-select overlay chooser
         layer_btn = Button(text="≡ Layer", size_hint=(None, None), size=(220, 90),
-                           pos_hint={"right": 0.98, "top": 0.99}, font_size="30sp")
+                           pos_hint={"right": 0.98, "top": 0.99}, font_size="22sp")
         layer_btn.bind(on_release=self.open_layers)
         root.add_widget(layer_btn)
 
@@ -375,16 +384,44 @@ class OSMCycleApp(App):
                         size_hint_y=None)
         box.bind(minimum_height=box.setter("height"))
         for src in self.gpx_layer.sources():
-            tb = ToggleButton(text=src, size_hint_y=None, height=96, font_size="28sp",
+            tb = ToggleButton(text=src, size_hint_y=None, height=96, font_size="22.4sp",
                               state="down" if src in self.gpx_layer.enabled else "normal")
             tb.bind(on_release=lambda b, s=src:
                     self.gpx_layer.set_enabled(s, b.state == "down"))
             box.add_widget(tb)
         pk = ToggleButton(text="\U0001F53A Gipfelnamen", size_hint_y=None, height=96,
-                          font_size="28sp",
+                          font_size="22.4sp",
                           state="down" if self.peaks_layer.visible else "normal")
-        pk.bind(on_release=lambda b: self.peaks_layer.set_visible(b.state == "down"))
         box.add_widget(pk)
+        pk_big = ToggleButton(text="\U0001F53A Gipfelnamen groß", size_hint_y=None,
+                              height=96, font_size="22.4sp",
+                              state="down" if self.peaks_big_layer.visible else "normal")
+        box.add_widget(pk_big)
+
+        # Beide Gipfel-Layer zeigen dieselben Namen; gleichzeitig aktiv wuerden
+        # sie uebereinander zeichnen -> der eine schaltet den anderen ab.
+        def _peaks(_b):
+            on = pk.state == "down"
+            self.peaks_layer.set_visible(on)
+            if on and pk_big.state == "down":
+                pk_big.state = "normal"
+                self.peaks_big_layer.set_visible(False)
+
+        def _peaks_big(_b):
+            on = pk_big.state == "down"
+            self.peaks_big_layer.set_visible(on)
+            if on and pk.state == "down":
+                pk.state = "normal"
+                self.peaks_layer.set_visible(False)
+
+        pk.bind(on_release=_peaks)
+        pk_big.bind(on_release=_peaks_big)
+
+        mast = ToggleButton(text="\U0001F4F6 Sendemasten", size_hint_y=None, height=96,
+                            font_size="22.4sp",
+                            state="down" if self.masts_layer.visible else "normal")
+        mast.bind(on_release=lambda b: self.masts_layer.set_visible(b.state == "down"))
+        box.add_widget(mast)
         sv = ScrollView()
         sv.add_widget(box)
         Popup(title="Layer anzeigen", content=sv, size_hint=(0.85, 0.7)).open()
@@ -545,8 +582,23 @@ class OSMCycleApp(App):
         if not self.recorder.recording:
             self.status.text = f"{lat:.5f}, {lon:.5f}"
 
+    def _map_size_text(self):
+        """Groesse der aktiven Offline-Karte. Bei laufendem Download waechst die
+        Datei, darum jedes Mal frisch statten statt zu cachen."""
+        path = find_mbtiles()
+        if not path:
+            return None
+        try:
+            gb = os.path.getsize(path) / 2 ** 30
+        except OSError:
+            return None
+        return f"{gb:.1f}".replace(".", ",") + " GB"
+
     def _ele_line(self):
-        return f"Höhe: {self.last_ele:.0f} m" if self.last_ele is not None else "Höhe: —"
+        ele = (f"Höhe: {self.last_ele:.0f} m" if self.last_ele is not None
+               else "Höhe: —")
+        size = self._map_size_text()
+        return f"{ele}   ·   Karte: {size}" if size else ele
 
     def _loc_tick(self, dt):
         """Idle readout refresh (60 s). Recording is handled by _rec_tick (10 s)."""

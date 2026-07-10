@@ -1,6 +1,9 @@
 """GPS track recording + GPX export + on-map track/GPX layers for OSMCycle."""
+import bisect
 import glob
+import json
 import os
+import re
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -9,6 +12,21 @@ from kivy.core.text import Label as CoreLabel
 from kivy.graphics import (Color, Line, Ellipse, Triangle, Rectangle,
                            PushMatrix, PopMatrix, Rotate)
 from kivy_garden.mapview import MapLayer
+
+
+_DATE_IN_NAME = re.compile(
+    r"\d{4}-\d{2}-\d{2}"        # 2026-07-10   <- so heissen aufgenommene Tracks
+    r"|\d{4}_\d{2}_\d{2}"       # 2026_07_10
+    r"|\d{2}\.\d{2}\.\d{4}"     # 10.07.2026
+    r"|(?:19|20)\d{6}"          # 20260710
+)
+
+
+def _dated(path):
+    """True, wenn der Dateiname ein Datum traegt. Aufgezeichnete Fahrten heissen
+    track_2026-07-10_15-30-00.gpx; die bleiben aus den Layern. Die mitgelieferten
+    Routen (karnisch, maximilian, tirol, gipfel) haben keins und bleiben sichtbar."""
+    return bool(_DATE_IN_NAME.search(os.path.basename(path)))
 
 
 def _writable(d):
@@ -121,6 +139,8 @@ class GpxLayer(MapLayer):
             dirs = [dirs]
         for d in dirs:
             for path in sorted(glob.glob(os.path.join(d or "", "*.gpx"))):
+                if _dated(path):
+                    continue
                 try:
                     self._load(path)
                 except Exception:
@@ -223,16 +243,20 @@ class PeaksLayer(MapLayer):
     so tens of thousands of peaks stay smooth."""
     MIN_ZOOM = 13
     MAX_LABELS = 80
+    FONT_SIZE = 26                 # Standard; grosse Variante bekommt 20 % mehr
 
-    def __init__(self, dirs, **kwargs):
+    def __init__(self, dirs, font_size=FONT_SIZE, **kwargs):
         super().__init__(**kwargs)
         self.visible = False
+        self.font_size = font_size
         self.peaks = []            # (lat, lon, name)
         self._tex = {}             # name -> Texture (lazy cache)
         if isinstance(dirs, str):
             dirs = [dirs]
         for d in dirs:
             for path in sorted(glob.glob(os.path.join(d or "", "*.gpx"))):
+                if _dated(path):
+                    continue
                 try:
                     self._load(path)
                 except Exception:
@@ -258,7 +282,7 @@ class PeaksLayer(MapLayer):
     def _texture(self, name):
         tex = self._tex.get(name)
         if tex is None:
-            lbl = CoreLabel(text=name, font_size=26)
+            lbl = CoreLabel(text=name, font_size=self.font_size)
             lbl.refresh()
             tex = lbl.texture
             self._tex[name] = tex
@@ -299,6 +323,64 @@ class PeaksLayer(MapLayer):
                     Rectangle(texture=tex, pos=(x + 8, y - 1), size=(w, h))
                 drawn += 1
                 if drawn >= self.MAX_LABELS:
+                    break
+
+
+class MastsLayer(MapLayer):
+    """Mobilfunk-Sendemasten (EMF-Standorte der BNetzA, Bayern) als Punkte.
+    Knapp 14.000 Standorte, darum wie PeaksLayer: erst ab MIN_ZOOM, nur im
+    sichtbaren Fenster und mit Zeichen-Obergrenze. Die JSON-Liste ist nach lat
+    sortiert, also findet eine Bisektion das sichtbare Breitenband, statt jeden
+    Frame alle Punkte zu prüfen."""
+    MIN_ZOOM = 12
+    MAX_POINTS = 500
+    COLOR = (0.85, 0.15, 0.15, 0.85)     # rot, hebt sich von Track-Lila ab
+
+    def __init__(self, path, **kwargs):
+        super().__init__(**kwargs)
+        self.visible = False
+        self.masts = []
+        try:
+            with open(path) as f:
+                self.masts = [(float(a), float(b)) for a, b in json.load(f)]
+        except Exception:
+            pass                         # keine Datei -> Layer bleibt leer
+        self.masts.sort()                # Bisektion braucht lat-Sortierung
+        self._lats = [m[0] for m in self.masts]
+
+    def count(self):
+        return len(self.masts)
+
+    def set_visible(self, on):
+        self.visible = on
+        self.reposition()
+
+    def reposition(self, *args):
+        mapview = self.parent
+        self.canvas.clear()
+        if not mapview or not self.visible or not self.masts:
+            return
+        if int(mapview.zoom) < self.MIN_ZOOM:
+            return
+        try:
+            bb = mapview.get_bbox()
+            vlatmin, vlatmax = min(bb[0], bb[2]), max(bb[0], bb[2])
+            vlonmin, vlonmax = min(bb[1], bb[3]), max(bb[1], bb[3])
+        except Exception:
+            return
+        lo = bisect.bisect_left(self._lats, vlatmin)
+        hi = bisect.bisect_right(self._lats, vlatmax)
+        zoom = mapview.zoom
+        drawn = 0
+        with self.canvas:
+            Color(*self.COLOR)
+            for lat, lon in self.masts[lo:hi]:
+                if not (vlonmin <= lon <= vlonmax):
+                    continue
+                x, y = mapview.get_window_xy_from(lat, lon, zoom)
+                Ellipse(pos=(x - 4, y - 4), size=(8, 8))
+                drawn += 1
+                if drawn >= self.MAX_POINTS:
                     break
 
 
