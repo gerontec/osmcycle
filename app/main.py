@@ -8,6 +8,7 @@ Hiking trails and recorded tracks are shown as an efficient GPX overlay.
 """
 import glob
 import os
+import re
 import shutil
 import threading
 
@@ -28,6 +29,17 @@ from track import (TrackLayer, TrackRecorder, PositionLayer, GpxLayer,
                    COLOR_MASTS, COLOR_BATHING, COLOR_GROUNDWATER)
 
 MBTILES_NAME = "alpen.mbtiles"
+
+# --- Update-Check -----------------------------------------------------------
+# Die App installiert nichts selbst; sie vergleicht nur die eigene Version mit
+# dem neuesten GitHub-Release und reicht den Download an den Browser weiter.
+# get_apk.php leitet stabil auf das Asset der neuesten Release-APK.
+GITHUB_LATEST = "https://api.github.com/repos/gerontec/osmcycle/releases/latest"
+APK_REDIRECT = "https://heissa.de/web1/get_apk.php"
+# Nur Notnagel: auf Android kommt die Version aus PackageInfo.versionName,
+# das ist die Wahrheit aus buildozer.spec und kann nicht davon abweichen.
+APP_VERSION = "1.2"
+
 # Punkt-Layer, aus wagodb exportiert (siehe scripts/export_points.sh)
 MASTS_NAME = "sendemasten.json"        # EMF-Standorte der BNetzA
 BATHING_NAME = "badestellen.json"      # LGL-Badegewaesser
@@ -198,6 +210,17 @@ def upload_tracks_daily():
     print(f"[upload] done, {sent} sent")
 
 
+def version_tuple(text):
+    """'v1.10' -> (1, 10). Leeres Tupel, wenn nichts Brauchbares drinsteht —
+    dann wird nicht verglichen und der Nutzer nicht mit Unsinn behelligt."""
+    parts = []
+    for chunk in re.split(r"[.\-+_]", (text or "").strip().lstrip("vV")):
+        if not chunk.isdigit():
+            break                      # Suffixe wie '1.2-beta' hoeren hier auf
+        parts.append(int(chunk))
+    return tuple(parts)
+
+
 class OSMCycleApp(App):
     def build(self):
         mbt = find_mbtiles()
@@ -286,11 +309,79 @@ class OSMCycleApp(App):
         root.add_widget(self.center_btn)
 
         Clock.schedule_once(lambda dt: self.start_gps(), 1)
+        Clock.schedule_once(lambda dt: self._check_update(), 3)   # still im Hintergrund
         if not mbt:                       # no offline map yet → fetch it
             Clock.schedule_once(lambda dt: self._auto_get_map(), 1.5)
         # once/day: push recorded tracks to the public heissa.de report
         threading.Thread(target=upload_tracks_daily, daemon=True).start()
         return root
+
+    # --- Update-Check ------------------------------------------------------
+    def _app_version(self):
+        """Eigene Version. Auf Android aus PackageInfo (kommt aus buildozer.spec),
+        sonst der Notnagel APP_VERSION."""
+        try:
+            from jnius import autoclass
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            ctx = PythonActivity.mActivity
+            return ctx.getPackageManager().getPackageInfo(
+                ctx.getPackageName(), 0).versionName
+        except Exception:
+            return APP_VERSION
+
+    def _check_update(self):
+        threading.Thread(target=self._update_thread, daemon=True).start()
+
+    def _update_thread(self):
+        """Fragt das neueste GitHub-Release ab. Still bei jedem Fehler: ein
+        fehlgeschlagener Update-Check darf die Karte nie stoeren."""
+        import requests
+        try:
+            r = requests.get(GITHUB_LATEST, timeout=8,
+                             headers={"User-Agent": "osmcycle"})
+            tag = r.json().get("tag_name", "")
+        except Exception:
+            return
+        latest, current = version_tuple(tag), version_tuple(self._app_version())
+        if latest and current and latest > current:
+            Clock.schedule_once(lambda dt: self._offer_update(tag))
+
+    def _offer_update(self, tag):
+        box = BoxLayout(orientation="vertical", spacing=12, padding=16)
+        box.add_widget(Label(
+            text=f"Neue Version {tag} verfügbar.\n"
+                 f"Installiert: v{self._app_version()}",
+            font_size="26sp", halign="center"))
+        row = BoxLayout(size_hint_y=None, height=110, spacing=12)
+        yes = Button(text="Laden", font_size="30sp")
+        no = Button(text="Später", font_size="30sp")
+        row.add_widget(yes)
+        row.add_widget(no)
+        box.add_widget(row)
+        self._upd = Popup(title="Update", content=box, size_hint=(0.9, 0.5))
+        yes.bind(on_release=lambda b: (self._upd.dismiss(),
+                                       self._open_url(APK_REDIRECT)))
+        no.bind(on_release=lambda b: self._upd.dismiss())
+        self._upd.open()
+
+    def _open_url(self, url):
+        """Uebergibt an den Browser. Die Installation macht Android selbst — eine
+        In-App-Installation braeuchte REQUEST_INSTALL_PACKAGES + FileProvider."""
+        try:
+            from jnius import autoclass, cast
+            Intent = autoclass("android.content.Intent")
+            Uri = autoclass("android.net.Uri")
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            cast("android.content.Context",
+                 PythonActivity.mActivity).startActivity(intent)
+        except Exception:
+            try:
+                import webbrowser
+                webbrowser.open(url)
+            except Exception:
+                pass
 
     # --- first-run offline-map download ----------------------------------
     def _is_metered(self):
