@@ -24,10 +24,14 @@ from kivy_garden.mapview import MapView, MapSource
 
 from hybridsource import HybridMapSource
 from track import (TrackLayer, TrackRecorder, PositionLayer, GpxLayer,
-                   PeaksLayer, MastsLayer, gpx_dir)
+                   PeaksLayer, PointsLayer, gpx_dir,
+                   COLOR_MASTS, COLOR_BATHING, COLOR_GROUNDWATER)
 
 MBTILES_NAME = "alpen.mbtiles"
-MASTS_NAME = "sendemasten.json"        # EMF-Standorte (BNetzA), aus wagodb exportiert
+# Punkt-Layer, aus wagodb exportiert (siehe scripts/export_points.sh)
+MASTS_NAME = "sendemasten.json"        # EMF-Standorte der BNetzA
+BATHING_NAME = "badestellen.json"      # LGL-Badegewaesser
+GROUNDWATER_NAME = "grundwasser.json"  # GKD-Grundwassermessstellen
 # Public tile server (netcup) — works out of the box for new users, no home
 # server / IPv6 needed. Serves z6-14 from CyclOSM_Alpen.sqlitedb via tile.php.
 ONLINE_URL = "https://tmind.de/maps/tile.php?z={z}&x={x}&y={y}"
@@ -226,7 +230,16 @@ class OSMCycleApp(App):
         self.peaks_big_layer = PeaksLayer([], font_size=PeaksLayer.FONT_SIZE * 1.2)
         self.peaks_big_layer.peaks = self.peaks_layer.peaks
         self.mapview.add_layer(self.peaks_big_layer)
-        self.masts_layer = MastsLayer(os.path.join(HERE, MASTS_NAME))
+        # Punkt-Layer: Grundwasser zuerst, damit die selteneren Badestellen und
+        # die Masten darueber liegen und nicht verdeckt werden.
+        self.groundwater_layer = PointsLayer(
+            os.path.join(HERE, GROUNDWATER_NAME), COLOR_GROUNDWATER, min_zoom=11)
+        self.mapview.add_layer(self.groundwater_layer)
+        self.bathing_layer = PointsLayer(
+            os.path.join(HERE, BATHING_NAME), COLOR_BATHING, min_zoom=10, radius=5)
+        self.mapview.add_layer(self.bathing_layer)
+        self.masts_layer = PointsLayer(
+            os.path.join(HERE, MASTS_NAME), COLOR_MASTS, min_zoom=12)
         self.mapview.add_layer(self.masts_layer)
         self.pos_layer = PositionLayer()
         self.mapview.add_layer(self.pos_layer)
@@ -417,11 +430,14 @@ class OSMCycleApp(App):
         pk.bind(on_release=_peaks)
         pk_big.bind(on_release=_peaks_big)
 
-        mast = ToggleButton(text="\U0001F4F6 Sendemasten", size_hint_y=None, height=96,
-                            font_size="22.4sp",
-                            state="down" if self.masts_layer.visible else "normal")
-        mast.bind(on_release=lambda b: self.masts_layer.set_visible(b.state == "down"))
-        box.add_widget(mast)
+        for text, layer in (("\U0001F4F6 Sendemasten", self.masts_layer),
+                            ("\U0001F3CA Badestellen", self.bathing_layer),
+                            ("\U0001F4A7 Grundwasserbrunnen", self.groundwater_layer)):
+            tb = ToggleButton(text=f"{text} ({layer.count()})", size_hint_y=None,
+                              height=96, font_size="22.4sp",
+                              state="down" if layer.visible else "normal")
+            tb.bind(on_release=lambda b, ly=layer: ly.set_visible(b.state == "down"))
+            box.add_widget(tb)
         sv = ScrollView()
         sv.add_widget(box)
         Popup(title="Layer anzeigen", content=sv, size_hint=(0.85, 0.7)).open()

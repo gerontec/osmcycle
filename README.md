@@ -45,9 +45,15 @@ Vorgerenderte Offline-Karten liegen zum Download bereit:
 - **APK (neueste Version):**
   **➡ https://github.com/gerontec/osmcycle/releases/latest** → die Datei
   `osmcycle-vX.apk` antippen. Spiegel ohne GitHub:
-  **https://tmind.de/maps/apk/osmcycle-v0.9.apk**
+  **https://tmind.de/maps/apk/osmcycle-v1.1.apk**
 - **Auto-Update:** [Obtainium](https://github.com/ImranR98/Obtainium) installieren →
   „Add App" → obige Repo-URL. Holt jede neue Release automatisch.
+  Die App selbst prüft **nicht** auf Updates — das macht ausschließlich
+  Obtainium. Damit ein Update installierbar ist, muss jede APK mit demselben
+  Schlüssel signiert sein: siehe [Immer mit demselben Debug-Keystore
+  signieren](#️-immer-mit-demselben-debug-keystore-signieren).
+  Der QR-Link `get_apk.php` cacht die GitHub-Antwort **1 Stunde**, liefert nach
+  einem Release also kurzzeitig noch die vorige APK.
 
 **Installation ohne Entwicklermodus** (normaler Weg, kein USB/ADB nötig):
 Android fragt beim ersten Öffnen der APK, ob es „aus dieser Quelle installieren"
@@ -182,6 +188,38 @@ adb install -r bin/osmcycle-0.1-arm64-v8a-debug.apk
 adb push alpen.mbtiles \
   /sdcard/Android/data/org.gerontec.osmcycle/files/alpen.mbtiles
 ```
+
+> ### ⚠️ Immer mit demselben Debug-Keystore signieren
+>
+> Android installiert ein Update nur über eine vorhandene App, wenn **beide APKs
+> mit demselben Schlüssel signiert** sind. Der Debug-Build nimmt dafür
+> `~/.android/debug.keystore` — und **buildozer erzeugt diese Datei auf jeder
+> neuen Maschine automatisch neu**, mit einem anderen Schlüssel.
+>
+> Baut man ein Release also erstmals auf einem anderen Rechner, holt Obtainium
+> die neue APK brav ab, und Android bricht die Installation mit einem
+> Signaturkonflikt ab („App not installed"). Für die Nutzer sieht das aus, als
+> sei das Release kaputt; sie müssten die App erst deinstallieren (und verlieren
+> dabei ihre app-privaten Daten).
+>
+> **Vor dem ersten Build auf einem neuen Rechner** den bisherigen Keystore
+> mitnehmen und den Fingerabdruck gegen die letzte veröffentlichte APK prüfen:
+>
+> ```bash
+> scp alter-rechner:~/.android/debug.keystore ~/.android/debug.keystore
+>
+> # Fingerabdruck des Keystores …
+> keytool -list -v -keystore ~/.android/debug.keystore \
+>         -storepass android -alias androiddebugkey | grep SHA256:
+>
+> # … muss dem der zuletzt veröffentlichten APK entsprechen
+> keytool -printcert -jarfile osmcycle-v<letzte>.apk | grep SHA256:
+> ```
+>
+> Der aktuell gültige Fingerabdruck ist
+> `17:18:6F:D0:F4:BD:FF:88:06:65:69:6E:23:8F:48:84:D2:5F:51:C3:38:AA:55:E0:0A:FB:23:9E:4E:EC:B4:E0`.
+> Weicht er ab, **nicht taggen** — sonst ist das Auto-Update für alle
+> Bestandsnutzer unbrauchbar.
 
 Set `ONLINE_URL` in `app/main.py` to a host the phone can reach (LAN IPv4, or
 the server's IPv6 / a DNS AAAA name for mobile use).

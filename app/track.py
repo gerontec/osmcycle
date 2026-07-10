@@ -29,6 +29,21 @@ def _dated(path):
     return bool(_DATE_IN_NAME.search(os.path.basename(path)))
 
 
+def rgba(hexstr, alpha=0.85):
+    """'#FF5020' -> (1.0, 0.314, 0.125, alpha)."""
+    s = hexstr.lstrip("#")
+    return (int(s[0:2], 16) / 255.0, int(s[2:4], 16) / 255.0,
+            int(s[4:6], 16) / 255.0, alpha)
+
+
+# Farben aus OsmAnds eigener Palette (DefaultColors.java), damit die App neben
+# einer OsmAnd-Karte nicht fremd wirkt. OsmRouteType.HIKING traegt dort "orange".
+COLOR_HIKING = rgba("#FF5020", 0.9)   # OsmAnd ORANGE    – Wanderwege
+COLOR_MASTS = rgba("#D00D0D")         # OsmAnd RED       – Sendemasten
+COLOR_BATHING = rgba("#10C0F0")       # OsmAnd LIGHTBLUE – Badestellen
+COLOR_GROUNDWATER = rgba("#1010A0")   # OsmAnd BLUE      – Grundwasserbrunnen
+
+
 def _writable(d):
     try:
         os.makedirs(d, exist_ok=True)
@@ -124,12 +139,12 @@ class PositionLayer(MapLayer):
 
 class GpxLayer(MapLayer):
     """Toggleable GPX overlay, rendered like OsmAnd: every .gpx in the given
-    folder(s) becomes coloured track lines. Kept smooth by (1) a zoom floor,
+    folder(s) becomes track lines. Kept smooth by (1) a zoom floor,
     (2) per-segment viewport culling and (3) screen-space point decimation, so
     only geometry near the active window is projected/drawn."""
     MIN_ZOOM = 11        # below this a whole trail fills the screen -> skip (lag)
     DECIMATE_PX = 2.5    # drop points closer than this (in screen px) to the last
-    DEFAULT_COLOR = (0.60, 0.10, 0.75, 0.9)
+    HIKING_COLOR = COLOR_HIKING   # eine Farbe fuer alle Wanderwege
 
     def __init__(self, dirs, **kwargs):
         super().__init__(**kwargs)
@@ -146,30 +161,18 @@ class GpxLayer(MapLayer):
                 except Exception:
                     pass
 
-    @staticmethod
-    def _hex_rgba(text):
-        try:
-            s = text.strip().lstrip("#")
-            return (int(s[0:2], 16) / 255.0, int(s[2:4], 16) / 255.0,
-                    int(s[4:6], 16) / 255.0, 0.9)
-        except Exception:
-            return GpxLayer.DEFAULT_COLOR
-
     def _load(self, path):
         root = ET.parse(path).getroot()
         base = os.path.splitext(os.path.basename(path))[0]
         for trk in root:
             if not trk.tag.endswith("trk"):
                 continue
-            color = self.DEFAULT_COLOR
             name = base
             for child in trk:
                 if child.tag.endswith("name") and child.text:
                     name = child.text
-                elif child.tag.endswith("extensions"):
-                    for c in child.iter():
-                        if c.tag.endswith("color") and c.text:
-                            color = self._hex_rgba(c.text)
+            # <osmand:color> aus der GPX wird bewusst ignoriert: alle Wanderwege
+            # sollen einheitlich erscheinen, nicht je Datei anders.
             for seg in trk:
                 if not seg.tag.endswith("trkseg"):
                     continue
@@ -184,7 +187,7 @@ class GpxLayer(MapLayer):
                     lats = [p[0] for p in pts]
                     lons = [p[1] for p in pts]
                     self.segments.append({
-                        "points": pts, "color": color, "src": name,
+                        "points": pts, "src": name,
                         "bb": (min(lats), min(lons), max(lats), max(lons))})
 
     def sources(self):
@@ -218,6 +221,7 @@ class GpxLayer(MapLayer):
         zoom = mapview.zoom
         d = self.DECIMATE_PX
         with self.canvas:
+            Color(*self.HIKING_COLOR)      # eine Farbe fuer alle Wanderwege
             for seg in self.segments:
                 if seg["src"] not in self.enabled:
                     continue             # track not selected -> skip
@@ -233,7 +237,6 @@ class GpxLayer(MapLayer):
                         coords += [x, y]
                         lx, ly = x, y
                 if len(coords) >= 4:
-                    Color(*seg["color"])
                     Line(points=coords, width=2.2, joint="round", cap="round")
 
 
@@ -326,30 +329,32 @@ class PeaksLayer(MapLayer):
                     break
 
 
-class MastsLayer(MapLayer):
-    """Mobilfunk-Sendemasten (EMF-Standorte der BNetzA, Bayern) als Punkte.
-    Knapp 14.000 Standorte, darum wie PeaksLayer: erst ab MIN_ZOOM, nur im
-    sichtbaren Fenster und mit Zeichen-Obergrenze. Die JSON-Liste ist nach lat
-    sortiert, also findet eine Bisektion das sichtbare Breitenband, statt jeden
-    Frame alle Punkte zu prüfen."""
-    MIN_ZOOM = 12
-    MAX_POINTS = 500
-    COLOR = (0.85, 0.15, 0.15, 0.85)     # rot, hebt sich von Track-Lila ab
+class PointsLayer(MapLayer):
+    """Punktwolke aus einer JSON-Liste [[lat,lon],...]. Wie PeaksLayer: erst ab
+    min_zoom, nur im sichtbaren Fenster, mit Zeichen-Obergrenze. Die Liste wird
+    nach lat sortiert, dann schneidet eine Bisektion das sichtbare Breitenband
+    heraus, statt jeden Frame alle Punkte zu prüfen — das traegt auch die knapp
+    14.000 Sendemasten fluessig."""
 
-    def __init__(self, path, **kwargs):
+    def __init__(self, path, color, min_zoom=12, max_points=500, radius=4,
+                 **kwargs):
         super().__init__(**kwargs)
         self.visible = False
-        self.masts = []
+        self.color = color
+        self.min_zoom = min_zoom
+        self.max_points = max_points
+        self.radius = radius
+        self.points = []
         try:
             with open(path) as f:
-                self.masts = [(float(a), float(b)) for a, b in json.load(f)]
+                self.points = [(float(a), float(b)) for a, b in json.load(f)]
         except Exception:
             pass                         # keine Datei -> Layer bleibt leer
-        self.masts.sort()                # Bisektion braucht lat-Sortierung
-        self._lats = [m[0] for m in self.masts]
+        self.points.sort()               # Bisektion braucht lat-Sortierung
+        self._lats = [p[0] for p in self.points]
 
     def count(self):
-        return len(self.masts)
+        return len(self.points)
 
     def set_visible(self, on):
         self.visible = on
@@ -358,9 +363,9 @@ class MastsLayer(MapLayer):
     def reposition(self, *args):
         mapview = self.parent
         self.canvas.clear()
-        if not mapview or not self.visible or not self.masts:
+        if not mapview or not self.visible or not self.points:
             return
-        if int(mapview.zoom) < self.MIN_ZOOM:
+        if int(mapview.zoom) < self.min_zoom:
             return
         try:
             bb = mapview.get_bbox()
@@ -371,16 +376,17 @@ class MastsLayer(MapLayer):
         lo = bisect.bisect_left(self._lats, vlatmin)
         hi = bisect.bisect_right(self._lats, vlatmax)
         zoom = mapview.zoom
+        r = self.radius
         drawn = 0
         with self.canvas:
-            Color(*self.COLOR)
-            for lat, lon in self.masts[lo:hi]:
+            Color(*self.color)
+            for lat, lon in self.points[lo:hi]:
                 if not (vlonmin <= lon <= vlonmax):
                     continue
                 x, y = mapview.get_window_xy_from(lat, lon, zoom)
-                Ellipse(pos=(x - 4, y - 4), size=(8, 8))
+                Ellipse(pos=(x - r, y - r), size=(2 * r, 2 * r))
                 drawn += 1
-                if drawn >= self.MAX_POINTS:
+                if drawn >= self.max_points:
                     break
 
 
