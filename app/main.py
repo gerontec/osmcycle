@@ -28,7 +28,11 @@ from track import (TrackLayer, TrackRecorder, PositionLayer, GpxLayer,
                    PeaksLayer, PointsLayer, gpx_dir,
                    COLOR_MASTS, COLOR_BATHING, COLOR_GROUNDWATER)
 
-MBTILES_NAME = "alpen.mbtiles"
+MBTILES_NAME = "alpen_z15.mbtiles"
+# Mitgelieferte Welt-Uebersicht (nur Kontinente, z0-5, ~1,2 MB). Sofort-Karte,
+# bis die grosse Offline-Karte vollstaendig geladen ist. Wird von find_mbtiles()
+# NICHT als "grosse Karte" erkannt (anderer Name), blockt den Download also nicht.
+MINI_NAME = "mini.mbtiles"
 
 # --- Update-Check -----------------------------------------------------------
 # Die App installiert nichts selbst; sie vergleicht nur die eigene Version mit
@@ -39,6 +43,9 @@ APK_REDIRECT = "https://heissa.de/web1/get_apk.php"
 # Nur Notnagel: auf Android kommt die Version aus PackageInfo.versionName,
 # das ist die Wahrheit aus buildozer.spec und kann nicht davon abweichen.
 APP_VERSION = "1.2"
+# Wird beim Build gestempelt (build_apk.sh setzt das Datum). Erscheint unten
+# rechts auf der Karte als "vX.Y · JJJJ-MM-TT" statt der (C)-Attribution.
+BUILD_DATE = "2026-07-10"
 
 # Punkt-Layer, aus wagodb exportiert (siehe scripts/export_points.sh)
 MASTS_NAME = "sendemasten.json"        # EMF-Standorte der BNetzA
@@ -48,7 +55,7 @@ GROUNDWATER_NAME = "grundwasser.json"  # GKD-Grundwassermessstellen
 # server / IPv6 needed. Serves z6-14 from CyclOSM_Alpen.sqlitedb via tile.php.
 ONLINE_URL = "https://tmind.de/maps/tile.php?z={z}&x={x}&y={y}"
 # Offline map for first-run download (new users, no map yet)
-MBTILES_URL = "https://tmind.de/maps/alpen.mbtiles"
+MBTILES_URL = "https://tmind.de/maps/alpen_z15.mbtiles"
 # Public GPX drop — recorded tracks are uploaded here once/day so they show up
 # on https://heissa.de/web1/gpx_report.php. No token, anyone may upload.
 GPX_UPLOAD_URL = "https://heissa.de/web1/gpx_upload.php"
@@ -224,18 +231,32 @@ def version_tuple(text):
 class OSMCycleApp(App):
     def build(self):
         mbt = find_mbtiles()
+        mini = os.path.join(HERE, MINI_NAME)
         if mbt:
             source = HybridMapSource(mbtiles_path=mbt, url=ONLINE_URL,
-                                     cache_key="cyclosm", min_zoom=2, max_zoom=14,
+                                     cache_key="cyclosm", min_zoom=2, max_zoom=15,
                                      tile_size=256, image_ext="png",
-                                     attribution="© OpenStreetMap, CyclOSM")
+                                     attribution="")
+        elif os.path.exists(mini):
+            # Noch keine grosse Karte: die mitgelieferte Welt-Uebersicht (z0-5,
+            # nur Kontinente) sofort offline zeigen; z6+ kommt online dazu, bis
+            # der grosse Download fertig ist und _download_done umschaltet.
+            source = HybridMapSource(mbtiles_path=mini, url=ONLINE_URL,
+                                     cache_key="cyclosm", min_zoom=0, max_zoom=14,
+                                     tile_size=256, image_ext="png",
+                                     attribution="")
         else:
+            # tile.php liest die z6-14-Karte, hier waere 15 gelogen.
             source = MapSource(url=ONLINE_URL, cache_key="cyclosm", min_zoom=2,
                                max_zoom=14, tile_size=256, image_ext="png",
-                               attribution="© OpenStreetMap, CyclOSM")
+                               attribution="")
 
         root = FloatLayout()
-        self.mapview = MapView(zoom=13, lat=47.68, lon=11.57)
+        # Mit Detailkarte direkt in die Alpen (z13). Ohne (nur Mini-Weltkarte)
+        # auf Uebersichtszoom starten, damit sofort die Kontinente sichtbar sind
+        # statt einer leeren Flaeche; nach dem Download schaltet _download_done um.
+        start_zoom = 13 if mbt else 3
+        self.mapview = MapView(zoom=start_zoom, lat=47.68, lon=11.57)
         self.mapview.map_source = source
         root.add_widget(self.mapview)
 
@@ -307,6 +328,16 @@ class OSMCycleApp(App):
                                  size=(110, 110), pos_hint={"right": 0.98, "y": 0.03})
         self.center_btn.bind(on_release=self.center_on_me)
         root.add_widget(self.center_btn)
+
+        # Release + Deploy-Datum unten rechts (ersetzt die (C)-Attribution).
+        # Sitzt am unteren Rand unter dem ◎-Button.
+        self.info_lbl = Label(
+            text=f"v{self._app_version()} · {BUILD_DATE}",
+            size_hint=(None, None), size=(360, 24),
+            pos_hint={"right": 0.995, "y": 0.0},
+            color=(0, 0, 0, 0.6), halign="right", valign="bottom",
+            font_size="12sp", text_size=(360, 24))
+        root.add_widget(self.info_lbl)
 
         Clock.schedule_once(lambda dt: self.start_gps(), 1)
         Clock.schedule_once(lambda dt: self._check_update(), 3)   # still im Hintergrund
@@ -386,7 +417,7 @@ class OSMCycleApp(App):
     # --- first-run offline-map download ----------------------------------
     def _is_metered(self):
         """True on mobile data / metered WiFi (or if unknown) — used to avoid
-        auto-pulling the ~2.4 GB map over a cellular plan."""
+        auto-pulling the ~6.9 GB map over a cellular plan."""
         try:
             from jnius import autoclass
             Context = autoclass("android.content.Context")
@@ -398,7 +429,7 @@ class OSMCycleApp(App):
 
     def _auto_get_map(self):
         """No offline map yet: auto-download on WiFi (non-blocking, app stays
-        usable via online streaming); on mobile data ask first (2.4 GB)."""
+        usable via online streaming); on mobile data ask first (6.9 GB)."""
         if self._is_metered():
             self._offer_download()
         else:
@@ -407,7 +438,7 @@ class OSMCycleApp(App):
     def _offer_download(self):
         box = BoxLayout(orientation="vertical", spacing=12, padding=16)
         box.add_widget(Label(
-            text="Offline-Karte (~2,4 GB) jetzt herunterladen?\n"
+            text="Offline-Karte (~6,9 GB, Zoom 15) jetzt herunterladen?\n"
                  "Empfohlen im WLAN. Danach voll offline nutzbar.",
             font_size="26sp", halign="center"))
         row = BoxLayout(size_hint_y=None, height=110, spacing=12)
@@ -473,8 +504,8 @@ class OSMCycleApp(App):
         self.dl_lbl.text = ""
         self.mapview.map_source = HybridMapSource(
             mbtiles_path=dest, url=ONLINE_URL, cache_key="cyclosm",
-            min_zoom=2, max_zoom=14, tile_size=256, image_ext="png",
-            attribution="© OpenStreetMap, CyclOSM")
+            min_zoom=2, max_zoom=15, tile_size=256, image_ext="png",
+            attribution="")
         self.status.text = "Offline-Karte geladen"
 
     def _download_failed(self, msg):
