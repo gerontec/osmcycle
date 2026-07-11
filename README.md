@@ -45,7 +45,7 @@ Vorgerenderte Offline-Karten liegen zum Download bereit:
 - **APK (neueste Version):**
   **➡ https://github.com/gerontec/osmcycle/releases/latest** → die Datei
   `osmcycle-vX.apk` antippen. Spiegel ohne GitHub:
-  **https://tmind.de/maps/apk/osmcycle-v1.1.apk**
+  **https://heissa.de/web1/apk/osmcycle-v1.5.apk**
 - **Auto-Update:** [Obtainium](https://github.com/ImranR98/Obtainium) installieren →
   „Add App" → obige Repo-URL. Holt jede neue Release automatisch.
   Die App selbst prüft **nicht** auf Updates — das macht ausschließlich

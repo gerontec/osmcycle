@@ -303,11 +303,15 @@ class OSMCycleApp(App):
                              font_size="15sp", text_size=(560, 34))
         root.add_widget(self.ele_lbl)
         self.ele_lbl.text = self._ele_line()   # Kartengroesse schon vor dem GPS-Fix
-        # background offline-map download progress (empty unless downloading)
+        # background offline-map download progress (empty unless downloading).
+        # Height follows the rendered text (texture_size) so it never clips —
+        # robust across devices with different screen densities.
         self.dl_lbl = Label(text="", size_hint=(None, None),
-                            size=(560, 28), pos_hint={"x": 0.01, "top": 0.918},
-                            color=(0.1, 0.42, 0.15, 1), halign="left", valign="middle",
-                            font_size="13sp", text_size=(560, 28))
+                            width=820, height=40, pos_hint={"x": 0.01, "top": 0.90},
+                            color=(0.05, 0.35, 0.10, 1), halign="left", valign="middle",
+                            font_size="24sp", bold=True, text_size=(820, None))
+        self.dl_lbl.bind(
+            texture_size=lambda inst, ts: setattr(inst, "height", ts[1] + 12))
         root.add_widget(self.dl_lbl)
 
         # REC (bottom-left)
@@ -544,9 +548,15 @@ class OSMCycleApp(App):
         return True
 
     def _progress(self, done, total):
-        mb = done // 1048576
-        txt = (f"{done * 100 // total} %  ({mb} / {total // 1048576} MB)"
-               if total else f"{mb} MB")
+        # Percent on the first line, size in GB on the second — stays big and
+        # readable without the size running off the right edge (2 lines fit).
+        if total:
+            pct = done * 100 // total
+            sz = (f"{done / 1073741824:.1f} / {total / 1073741824:.1f} GB"
+                  .replace(".", ","))
+            txt = f"{pct} %\n{sz}"
+        else:
+            txt = f"{done // 1048576} MB"
         if getattr(self, "_prog", None):
             self._prog_lbl.text = txt
         else:
@@ -554,8 +564,8 @@ class OSMCycleApp(App):
 
     def _progress_retry(self, attempt, have):
         mb = have // 1048576
-        txt = (f"Verbindung unterbrochen – neuer Versuch {attempt}"
-               f"/{self.MAP_DL_RETRIES} (bei {mb} MB)…")
+        txt = (f"Neuer Versuch {attempt}/{self.MAP_DL_RETRIES} "
+               f"(bei {mb} MB)…")
         if getattr(self, "_prog", None):
             self._prog_lbl.text = txt
         else:
@@ -575,7 +585,7 @@ class OSMCycleApp(App):
         if getattr(self, "_prog", None):
             self._prog.dismiss()
         # The .part file is kept — the next start resumes where this stopped.
-        self.dl_lbl.text = "Karten-Download unterbrochen – wird später fortgesetzt"
+        self.dl_lbl.text = "Download unterbrochen – wird fortgesetzt"
 
     # --- layer menu (multi-select) ---------------------------------------
     def open_layers(self, *_):
