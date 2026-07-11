@@ -333,6 +333,25 @@ class OSMCycleApp(App):
         self.center_btn.bind(on_release=self.center_on_me)
         root.add_widget(self.center_btn)
 
+        # Zoom +/- (rechte Kante, mittig) mit aktueller Stufe darunter (max z15)
+        self.zoom_in_btn = Button(text="+", font_size=52, size_hint=(None, None),
+                                  size=(110, 110),
+                                  pos_hint={"right": 0.98, "center_y": 0.64})
+        self.zoom_in_btn.bind(on_release=lambda b: self._zoom_by(1))
+        root.add_widget(self.zoom_in_btn)
+        self.zoom_out_btn = Button(text="−", font_size=52, size_hint=(None, None),
+                                   size=(110, 110),
+                                   pos_hint={"right": 0.98, "center_y": 0.52})
+        self.zoom_out_btn.bind(on_release=lambda b: self._zoom_by(-1))
+        root.add_widget(self.zoom_out_btn)
+        self.zoom_lbl = Label(text=f"z{start_zoom}", size_hint=(None, None),
+                              size=(110, 34),
+                              pos_hint={"right": 0.98, "center_y": 0.44},
+                              color=(0, 0, 0, 1), halign="center", valign="middle",
+                              font_size="22sp", bold=True, text_size=(110, 34))
+        root.add_widget(self.zoom_lbl)
+        self.mapview.bind(zoom=self._on_zoom_changed)
+
         # Release + Deploy-Datum unten rechts (ersetzt die (C)-Attribution).
         # Sitzt am unteren Rand unter dem ◎-Button.
         self.info_lbl = Label(
@@ -350,6 +369,17 @@ class OSMCycleApp(App):
         # once/day: push recorded tracks to the public heissa.de report
         threading.Thread(target=upload_tracks_daily, daemon=True).start()
         return root
+
+    def _zoom_by(self, delta):
+        """+/- buttons: step the zoom one level, clamped to the source range
+        (the offline pack caps at z15)."""
+        mv = self.mapview
+        lo = mv.map_source.get_min_zoom()
+        hi = mv.map_source.get_max_zoom()
+        mv.zoom = max(lo, min(hi, int(round(mv.zoom)) + delta))
+
+    def _on_zoom_changed(self, mapview, zoom):
+        self.zoom_lbl.text = f"z{int(zoom)}"
 
     # --- Update-Check ------------------------------------------------------
     def _app_version(self):
