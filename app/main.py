@@ -25,7 +25,7 @@ from kivy_garden.mapview import MapView, MapSource
 
 from hybridsource import HybridMapSource
 from track import (TrackLayer, TrackRecorder, PositionLayer, GpxLayer,
-                   PeaksLayer, PointsLayer, gpx_dir,
+                   PeaksLayer, PointsLayer, gpx_dir, _writable,
                    COLOR_MASTS, COLOR_BATHING, COLOR_GROUNDWATER)
 
 MBTILES_NAME = "alpen_z15.mbtiles"
@@ -42,10 +42,10 @@ GITHUB_LATEST = "https://api.github.com/repos/gerontec/osmcycle/releases/latest"
 APK_REDIRECT = "https://heissa.de/web1/get_apk.php"
 # Nur Notnagel: auf Android kommt die Version aus PackageInfo.versionName,
 # das ist die Wahrheit aus buildozer.spec und kann nicht davon abweichen.
-APP_VERSION = "1.2"
+APP_VERSION = "1.6"
 # Wird beim Build gestempelt (build_apk.sh setzt das Datum). Erscheint unten
 # rechts auf der Karte als "vX.Y · JJJJ-MM-TT" statt der (C)-Attribution.
-BUILD_DATE = "2026-07-10"
+BUILD_DATE = "2026-07-12"
 
 # Punkt-Layer, aus wagodb exportiert (siehe scripts/export_points.sh)
 MASTS_NAME = "sendemasten.json"        # EMF-Standorte der BNetzA
@@ -100,30 +100,45 @@ except Exception:
     _HAVE_JNIUS = False
 
 
-def mbtiles_target():
-    """Writable destination for the downloaded offline map (app-private dir is
-    always writable; find_mbtiles() checks it too)."""
+def map_dir():
+    """Folder for the offline map: PUBLIC, and laid out the way OsmAnd expects
+    its raster maps (<data folder>/tiles/), so pointing OsmAnd's data folder at
+    /sdcard/maps makes it read the very same file — no second 7 GB copy. Kept
+    out of the Syncthing folder (gpx_dir()) on purpose. Falls back to the
+    app-private dir when the public path is not writable (needs 'All files
+    access', see request_all_files_access())."""
+    candidates = ["/sdcard/maps/tiles", "/storage/emulated/0/maps/tiles"]
     try:
         from android import mActivity  # type: ignore
         ext = mActivity.getExternalFilesDir(None)
-        if ext:
-            return os.path.join(ext.getAbsolutePath(), MBTILES_NAME)
+        if ext:                                   # app-private fallback
+            candidates.append(ext.getAbsolutePath())
     except Exception:
         pass
-    return os.path.join(os.path.expanduser("~"), MBTILES_NAME)
+    candidates.append(os.path.expanduser("~"))
+    for d in candidates:
+        if _writable(d):
+            return d
+    return candidates[-1]
+
+
+def mbtiles_target():
+    """Writable destination for the downloaded offline map."""
+    return os.path.join(map_dir(), MBTILES_NAME)
 
 
 def find_mbtiles():
-    paths = []
+    paths = [os.path.join(map_dir(), MBTILES_NAME)]
     try:
+        # Maps downloaded by <=v1.5 still sit in the app-private dir; keep using
+        # them instead of pulling the multi-GB pack down again.
         from android import mActivity  # type: ignore
         ext = mActivity.getExternalFilesDir(None)
         if ext:
             paths.append(os.path.join(ext.getAbsolutePath(), MBTILES_NAME))
     except Exception:
         pass
-    paths += [os.path.join("/sdcard/osmcycle", MBTILES_NAME),
-              os.path.join(HERE, MBTILES_NAME), MBTILES_NAME]
+    paths += [os.path.join(HERE, MBTILES_NAME), MBTILES_NAME]
     return next((p for p in paths if p and os.path.exists(p)), None)
 
 
