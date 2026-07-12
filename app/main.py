@@ -14,6 +14,7 @@ import threading
 
 from kivy.app import App
 from kivy.clock import Clock
+from kivy.graphics import Color, RoundedRectangle
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.floatlayout import FloatLayout
@@ -23,6 +24,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.togglebutton import ToggleButton
 from kivy_garden.mapview import MapView, MapSource
 
+from appconfig import Config, ControlServer
 from hybridsource import HybridMapSource
 from track import (TrackLayer, TrackRecorder, PositionLayer, GpxLayer,
                    PeaksLayer, PointsLayer, gpx_dir, _writable,
@@ -42,7 +44,7 @@ GITHUB_LATEST = "https://api.github.com/repos/gerontec/osmcycle/releases/latest"
 APK_REDIRECT = "https://heissa.de/web1/get_apk.php"
 # Nur Notnagel: auf Android kommt die Version aus PackageInfo.versionName,
 # das ist die Wahrheit aus buildozer.spec und kann nicht davon abweichen.
-APP_VERSION = "1.6"
+APP_VERSION = "1.7"
 # Wird beim Build gestempelt (build_apk.sh setzt das Datum). Erscheint unten
 # rechts auf der Karte als "vX.Y · JJJJ-MM-TT" statt der (C)-Attribution.
 BUILD_DATE = "2026-07-12"
@@ -52,7 +54,8 @@ MASTS_NAME = "sendemasten.json"        # EMF-Standorte der BNetzA
 BATHING_NAME = "badestellen.json"      # LGL-Badegewaesser
 GROUNDWATER_NAME = "grundwasser.json"  # GKD-Grundwassermessstellen
 # Public tile server (netcup) — works out of the box for new users, no home
-# server / IPv6 needed. Serves z6-14 from CyclOSM_Alpen.sqlitedb via tile.php.
+# server / IPv6 needed. tile.php serves z6-15 straight out of the same
+# alpen_z15.mbtiles that MBTILES_URL hands out.
 ONLINE_URL = "https://tmind.de/maps/tile.php?z={z}&x={x}&y={y}"
 # Offline map for first-run download (new users, no map yet)
 MBTILES_URL = "https://tmind.de/maps/alpen_z15.mbtiles"
@@ -245,11 +248,20 @@ def version_tuple(text):
 
 class OSMCycleApp(App):
     def build(self):
+        # Alle Einstellungen liegen in EINER Datei im oeffentlichen GPX-Ordner
+        # (/sdcard/osmcycle/config.json). request_all_files_access() laeuft erst
+        # weiter unten, darum hier den Ordner selbst anlegen — sonst landet die
+        # Datei im app-privaten Fallback und waere per adb nicht erreichbar.
+        request_all_files_access()
+        self.cfg = Config(gpx_dir()).load()
+
         mbt = find_mbtiles()
         mini = os.path.join(HERE, MINI_NAME)
+        lo = self.cfg.get("map.min_zoom", 2)
+        hi = self.cfg.get("map.max_zoom", 15)
         if mbt:
             source = HybridMapSource(mbtiles_path=mbt, url=ONLINE_URL,
-                                     cache_key="cyclosm", min_zoom=2, max_zoom=15,
+                                     cache_key="cyclosm", min_zoom=lo, max_zoom=hi,
                                      tile_size=256, image_ext="png",
                                      attribution="")
         elif os.path.exists(mini):
@@ -257,28 +269,28 @@ class OSMCycleApp(App):
             # nur Kontinente) sofort offline zeigen; z6+ kommt online dazu, bis
             # der grosse Download fertig ist und _download_done umschaltet.
             source = HybridMapSource(mbtiles_path=mini, url=ONLINE_URL,
-                                     cache_key="cyclosm", min_zoom=0, max_zoom=14,
+                                     cache_key="cyclosm", min_zoom=0, max_zoom=hi,
                                      tile_size=256, image_ext="png",
                                      attribution="")
         else:
-            # tile.php liest die z6-14-Karte, hier waere 15 gelogen.
-            source = MapSource(url=ONLINE_URL, cache_key="cyclosm", min_zoom=2,
-                               max_zoom=14, tile_size=256, image_ext="png",
+            source = MapSource(url=ONLINE_URL, cache_key="cyclosm", min_zoom=lo,
+                               max_zoom=hi, tile_size=256, image_ext="png",
                                attribution="")
 
         root = FloatLayout()
-        # Mit Detailkarte direkt in die Alpen (z13). Ohne (nur Mini-Weltkarte)
-        # auf Uebersichtszoom starten, damit sofort die Kontinente sichtbar sind
+        # Mit Detailkarte direkt in die Alpen. Ohne (nur Mini-Weltkarte) auf
+        # Uebersichtszoom starten, damit sofort die Kontinente sichtbar sind
         # statt einer leeren Flaeche; nach dem Download schaltet _download_done um.
-        start_zoom = 13 if mbt else 3
-        self.mapview = MapView(zoom=start_zoom, lat=47.68, lon=11.57)
+        start_zoom = self.cfg.get("map.start_zoom", 13) if mbt else 3
+        self.mapview = MapView(zoom=start_zoom,
+                               lat=self.cfg.get("map.start_lat", 47.68),
+                               lon=self.cfg.get("map.start_lon", 11.57))
         self.mapview.map_source = source
         root.add_widget(self.mapview)
 
         self.track_layer = TrackLayer()
         self.mapview.add_layer(self.track_layer)
         # single (public) gpx folder: bundled routes + own recordings
-        request_all_files_access()
         seed_gpx()
         self.gpx_layer = GpxLayer([gpx_dir()])
         self.mapview.add_layer(self.gpx_layer)
@@ -307,22 +319,16 @@ class OSMCycleApp(App):
         self.last_lat = self.last_lon = self.last_ele = None
         self._centered = False
 
-        self.status = Label(text="GPS: warte…", size_hint=(None, None),
-                            size=(560, 34), pos_hint={"x": 0.01, "top": 0.99},
-                            color=(0, 0, 0, 1), halign="left", valign="middle",
-                            font_size="15sp", text_size=(560, 34))
+        self.status = self._readout(text="GPS: warte…", top=0.99)
         root.add_widget(self.status)
-        self.ele_lbl = Label(text="", size_hint=(None, None),
-                             size=(560, 34), pos_hint={"x": 0.01, "top": 0.955},
-                             color=(0, 0, 0, 1), halign="left", valign="middle",
-                             font_size="15sp", text_size=(560, 34))
+        self.ele_lbl = self._readout(text="", top=0.955)
         root.add_widget(self.ele_lbl)
         self.ele_lbl.text = self._ele_line()   # Kartengroesse schon vor dem GPS-Fix
         # background offline-map download progress (empty unless downloading).
         # Height follows the rendered text (texture_size) so it never clips —
         # robust across devices with different screen densities.
         self.dl_lbl = Label(text="", size_hint=(None, None),
-                            width=820, height=40, pos_hint={"x": 0.01, "top": 0.90},
+                            width=820, height=40, pos_hint={"x": 0.01, "top": 0.84},
                             color=(0.05, 0.35, 0.10, 1), halign="left", valign="middle",
                             font_size="24sp", bold=True, text_size=(820, None))
         self.dl_lbl.bind(
@@ -380,21 +386,185 @@ class OSMCycleApp(App):
             font_size="12sp", text_size=(360, 24))
         root.add_widget(self.info_lbl)
 
+        self.apply_config()                       # layers etc. from config.json
+        # Pick up external edits (adb push / echo) within a couple of seconds,
+        # so the app can be reconfigured without ever touching the screen.
+        Clock.schedule_interval(self._config_tick, 2)
+        if self.cfg.get("control.http_enabled", True):
+            self.control = ControlServer(
+                self.cfg, self.state, self.action, self._apply_config_threadsafe,
+                port=self.cfg.get("control.port", 8765))
+            self.control.start()
+
         Clock.schedule_once(lambda dt: self.start_gps(), 1)
         Clock.schedule_once(lambda dt: self._check_update(), 3)   # still im Hintergrund
         if not mbt:                       # no offline map yet → fetch it
             Clock.schedule_once(lambda dt: self._auto_get_map(), 1.5)
+        if self.cfg.get("record.autostart", False):
+            Clock.schedule_once(lambda dt: self.action("record_start", {}), 2)
         # once/day: push recorded tracks to the public heissa.de report
         threading.Thread(target=upload_tracks_daily, daemon=True).start()
         return root
 
+    def _readout(self, text, top):
+        """Eine Ablesezeile (GPS-Status / Hoehe) oben links.
+
+        Zwei Fallen, die hier vorher beide zugeschnappt sind:
+
+        * 'sp' skaliert mit der System-Schriftgroesse (auf dem Poco font_scale
+          1.4, bei 440 dpi also Faktor 3.85). Eine in rohen Pixeln festgenagelte
+          Label-Hoehe ist dann kleiner als die Zeile und schneidet die Glyphen ab
+          -> Hoehe NIE fixieren, sondern aus texture_size nachfuehren.
+        * Schwarz direkt auf der Karte verschwindet ueber Wald und Hillshade
+          -> auf eine halbtransparente Platte legen.
+
+        Groesse und Fettung kommen aus der Config und werden von apply_config()
+        live nachgezogen — die richtige Groesse haengt am Geraet, die will man
+        nicht neu bauen muessen.
+        """
+        # 800 px: breit genug fuer "Höhe: 1234 m · Karte: 6,4 GB", endet aber vor
+        # dem ≡-Layer-Button oben rechts (der beginnt bei ~838 px).
+        width = 800
+        lbl = Label(text=text, size_hint=(None, None), size=(width, 10),
+                    pos_hint={"x": 0.01, "top": top},
+                    color=(0, 0, 0, 1), halign="left", valign="middle",
+                    text_size=(width - 24, None), padding=(12, 6))
+        lbl.bind(texture_size=lambda w, ts: setattr(w, "height", ts[1] + 12))
+
+        alpha = self.cfg.get("ui.panel_opacity", 0.78)
+        if alpha > 0:
+            with lbl.canvas.before:
+                Color(1, 1, 1, alpha)
+                plate = RoundedRectangle(pos=lbl.pos, size=lbl.size, radius=[10])
+            lbl.bind(pos=lambda w, v: setattr(plate, "pos", w.pos),
+                     size=lambda w, v: setattr(plate, "size", w.size))
+        return lbl
+
+    # --- config: file <-> UI ------------------------------------------------
+    def _config_tick(self, dt):
+        if self.cfg.reload_if_changed():
+            self.apply_config()
+
+    def _apply_config_threadsafe(self):
+        """Entry point for the HTTP thread. Applying the config redraws layers,
+        and Kivy refuses to build graphics instructions off the main thread —
+        so hop over via Clock instead of drawing here."""
+        Clock.schedule_once(lambda dt: self.apply_config(), 0)
+
+    def apply_config(self):
+        """Push the config onto the widgets. Idempotent, so it can run on every
+        external change as well as once at startup."""
+        cfg = self.cfg
+        font_size = cfg.get("ui.font_size", 11)
+        for lbl in (self.status, self.ele_lbl):
+            lbl.font_size = f"{font_size}sp"
+            lbl.bold = cfg.get("ui.bold", False)
+
+        self.peaks_layer.set_visible(cfg.get("layers.peaks", False))
+        self.peaks_big_layer.set_visible(cfg.get("layers.peaks_big", False))
+        self.masts_layer.set_visible(cfg.get("layers.masts", False))
+        self.bathing_layer.set_visible(cfg.get("layers.bathing", False))
+        self.groundwater_layer.set_visible(cfg.get("layers.groundwater", False))
+        wanted = set(cfg.get("layers.gpx", []) or [])
+        for src in self.gpx_layer.sources():
+            self.gpx_layer.set_enabled(src, src in wanted)
+
+    def _store_layers(self):
+        """Write the current overlay state back, so the file always mirrors what
+        is on screen — otherwise a UI toggle would be undone by the next reload."""
+        self.cfg.update({
+            "layers.peaks": self.peaks_layer.visible,
+            "layers.peaks_big": self.peaks_big_layer.visible,
+            "layers.masts": self.masts_layer.visible,
+            "layers.bathing": self.bathing_layer.visible,
+            "layers.groundwater": self.groundwater_layer.visible,
+            "layers.gpx": sorted(self.gpx_layer.enabled),
+        })
+
+    # --- remote control (see appconfig.py) ----------------------------------
+    def state(self):
+        """Everything an outside caller needs to know without a screenshot."""
+        mv = self.mapview
+        mbt = find_mbtiles()
+        return {
+            "version": self._app_version(),
+            "build_date": BUILD_DATE,
+            "position": {"lat": self.last_lat, "lon": self.last_lon,
+                         "ele": self.last_ele},
+            "map": {"zoom": round(mv.zoom, 2), "lat": round(mv.lat, 6),
+                    "lon": round(mv.lon, 6),
+                    "min_zoom": mv.map_source.get_min_zoom(),
+                    "max_zoom": mv.map_source.get_max_zoom(),
+                    "mbtiles": mbt,
+                    "mbtiles_gb": (round(os.path.getsize(mbt) / 2 ** 30, 2)
+                                   if mbt else None)},
+            "recording": {"active": self.recorder.recording,
+                          "points": len(self.recorder.points)},
+            "layers": {"peaks": self.peaks_layer.visible,
+                       "peaks_big": self.peaks_big_layer.visible,
+                       "masts": self.masts_layer.visible,
+                       "bathing": self.bathing_layer.visible,
+                       "groundwater": self.groundwater_layer.visible,
+                       "gpx_enabled": sorted(self.gpx_layer.enabled),
+                       "gpx_available": sorted(self.gpx_layer.sources())},
+            "gpx_dir": gpx_dir(),
+            "status": self.status.text,
+        }
+
+    def action(self, name, params):
+        """One-shot commands. Called from the HTTP thread, so every widget touch
+        is bounced onto the Kivy thread via Clock — Kivy is not thread-safe."""
+        def later(fn):
+            Clock.schedule_once(lambda dt: fn(), 0)
+            return {"ok": True, "action": name}
+
+        if name == "focus":
+            return later(self.center_on_me)
+        if name == "zoom_in":
+            return later(lambda: self._zoom_by(1))
+        if name == "zoom_out":
+            return later(lambda: self._zoom_by(-1))
+        if name == "set_zoom":
+            zoom = int(params.get("zoom", self.cfg.get("map.focus_zoom", 15)))
+            return later(lambda: self._set_zoom(zoom))
+        if name == "goto":
+            try:
+                lat = float(params["lat"])
+                lon = float(params["lon"])
+            except (KeyError, TypeError, ValueError):
+                return {"ok": False, "error": "goto needs lat and lon"}
+            zoom = params.get("zoom")
+            return later(lambda: self._goto(lat, lon, zoom))
+        if name == "record_start":
+            return later(lambda: self._set_recording(True))
+        if name == "record_stop":
+            return later(lambda: self._set_recording(False))
+        return {"ok": False, "error": f"unknown action: {name}",
+                "known": ["focus", "zoom_in", "zoom_out", "set_zoom", "goto",
+                          "record_start", "record_stop"]}
+
+    def _set_zoom(self, zoom):
+        mv = self.mapview
+        mv.zoom = max(mv.map_source.get_min_zoom(),
+                      min(mv.map_source.get_max_zoom(), int(zoom)))
+
+    def _goto(self, lat, lon, zoom=None):
+        if zoom is not None:
+            self._set_zoom(zoom)
+        self.mapview.center_on(lat, lon)
+
+    def _set_recording(self, on):
+        """Drive the REC button rather than the recorder, so the UI and the
+        recorder can never disagree about whether we are recording."""
+        if on == self.recorder.recording:
+            return
+        self.rec_btn.state = "down" if on else "normal"
+        self.toggle_record()
+
     def _zoom_by(self, delta):
         """+/- buttons: step the zoom one level, clamped to the source range
         (the offline pack caps at z15)."""
-        mv = self.mapview
-        lo = mv.map_source.get_min_zoom()
-        hi = mv.map_source.get_max_zoom()
-        mv.zoom = max(lo, min(hi, int(round(mv.zoom)) + delta))
+        self._set_zoom(int(round(self.mapview.zoom)) + delta)
 
     def _on_zoom_changed(self, mapview, zoom):
         self.zoom_lbl.text = f"z{int(round(zoom))}"
@@ -637,21 +807,26 @@ class OSMCycleApp(App):
 
     # --- layer menu (multi-select) ---------------------------------------
     def open_layers(self, *_):
+        # 'sp' wird mit der System-Schriftgroesse skaliert (Poco: 1.4) — die
+        # Zahl hier ist darum klein. Button-Hoehe bleibt bei 96 px, sonst wird
+        # das Menue unterwegs nicht mehr treffsicher bedienbar.
+        menu_fs = f"{self.cfg.get('ui.menu_font_size', 11)}sp"
         box = BoxLayout(orientation="vertical", spacing=6, padding=10,
                         size_hint_y=None)
         box.bind(minimum_height=box.setter("height"))
         for src in self.gpx_layer.sources():
-            tb = ToggleButton(text=src, size_hint_y=None, height=96, font_size="22.4sp",
+            tb = ToggleButton(text=src, size_hint_y=None, height=96, font_size=menu_fs,
                               state="down" if src in self.gpx_layer.enabled else "normal")
-            tb.bind(on_release=lambda b, s=src:
-                    self.gpx_layer.set_enabled(s, b.state == "down"))
+            tb.bind(on_release=lambda b, s=src: (
+                    self.gpx_layer.set_enabled(s, b.state == "down"),
+                    self._store_layers()))
             box.add_widget(tb)
         pk = ToggleButton(text="\U0001F53A Gipfelnamen", size_hint_y=None, height=96,
-                          font_size="22.4sp",
+                          font_size=menu_fs,
                           state="down" if self.peaks_layer.visible else "normal")
         box.add_widget(pk)
         pk_big = ToggleButton(text="\U0001F53A Gipfelnamen groß", size_hint_y=None,
-                              height=96, font_size="22.4sp",
+                              height=96, font_size=menu_fs,
                               state="down" if self.peaks_big_layer.visible else "normal")
         box.add_widget(pk_big)
 
@@ -663,6 +838,7 @@ class OSMCycleApp(App):
             if on and pk_big.state == "down":
                 pk_big.state = "normal"
                 self.peaks_big_layer.set_visible(False)
+            self._store_layers()
 
         def _peaks_big(_b):
             on = pk_big.state == "down"
@@ -670,6 +846,7 @@ class OSMCycleApp(App):
             if on and pk.state == "down":
                 pk.state = "normal"
                 self.peaks_layer.set_visible(False)
+            self._store_layers()
 
         pk.bind(on_release=_peaks)
         pk_big.bind(on_release=_peaks_big)
@@ -678,9 +855,10 @@ class OSMCycleApp(App):
                             ("\U0001F3CA Badestellen", self.bathing_layer),
                             ("\U0001F4A7 Grundwasserbrunnen", self.groundwater_layer)):
             tb = ToggleButton(text=f"{text} ({layer.count()})", size_hint_y=None,
-                              height=96, font_size="22.4sp",
+                              height=96, font_size=menu_fs,
                               state="down" if layer.visible else "normal")
-            tb.bind(on_release=lambda b, ly=layer: ly.set_visible(b.state == "down"))
+            tb.bind(on_release=lambda b, ly=layer: (
+                    ly.set_visible(b.state == "down"), self._store_layers()))
             box.add_widget(tb)
         sv = ScrollView()
         sv.add_widget(box)
@@ -747,7 +925,8 @@ class OSMCycleApp(App):
             pass
 
     def _gps_interval(self):
-        return 10000 if self.recorder.recording else 60000   # 10 s rec / 60 s idle
+        key = "gps.rec_interval" if self.recorder.recording else "gps.idle_interval"
+        return int(self.cfg.get(key, 10 if self.recorder.recording else 60)) * 1000
 
     def _gps_start(self):
         """Battery-friendly GPS + 60 s readout poll (plyer's callback is
@@ -763,7 +942,8 @@ class OSMCycleApp(App):
         except Exception as e:
             self.status.text = f"GPS n/v ({e})"
         if not getattr(self, "_disp_ev", None):
-            self._disp_ev = Clock.schedule_interval(self._loc_tick, 60)
+            self._disp_ev = Clock.schedule_interval(
+                self._loc_tick, self.cfg.get("gps.idle_interval", 60))
         self._loc_tick(0)
 
     def _gps_restart(self):
@@ -838,6 +1018,8 @@ class OSMCycleApp(App):
         if not self._centered:            # centre once so the arrow is on-screen
             self._centered = True
             self.mapview.center_on(lat, lon)
+        elif self.cfg.get("map.follow", False):   # keep the map under the arrow
+            self.mapview.center_on(lat, lon)
         self.ele_lbl.text = self._ele_line()          # altitude line (always)
         if not self.recorder.recording:
             self.status.text = f"{lat:.5f}, {lon:.5f}"
@@ -882,8 +1064,13 @@ class OSMCycleApp(App):
         self.status.text = f"REC · {len(self.recorder.points)} Punkte"
 
     def center_on_me(self, *_):
-        if self.last_lat is not None:
-            self.mapview.center_on(self.last_lat, self.last_lon)
+        """Fokus-Button: nicht nur zentrieren, sondern gleich auf die hoechste
+        Stufe zoomen (map.focus_zoom, per Default das Maximum der Offline-Karte).
+        Zentriert, aber weit herausgezoomt ist unterwegs nutzlos."""
+        if self.last_lat is None:
+            return
+        self._set_zoom(self.cfg.get("map.focus_zoom", 15))
+        self.mapview.center_on(self.last_lat, self.last_lon)
 
     # --- recording -------------------------------------------------------
     def toggle_record(self, *_):
@@ -893,7 +1080,8 @@ class OSMCycleApp(App):
             self.rec_btn.text = "■ STOP"
             self.status.text = "REC gestartet"
             self._gps_restart()                   # 10 s fixes while recording
-            self._rec_ev = Clock.schedule_interval(self._rec_tick, 10)
+            self._rec_ev = Clock.schedule_interval(
+                self._rec_tick, self.cfg.get("gps.rec_interval", 10))
             self._rec_tick(0)                     # drop the first dot immediately
         else:
             if getattr(self, "_rec_ev", None):
