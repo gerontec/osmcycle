@@ -60,6 +60,13 @@ Everything below is how each piece is built. Rendering is **CPU-bound**
 (Mapnik/Cairo) — no GPU needed on the server; the phone only does OpenGL
 compositing.
 
+> **"Why not just use Locus Map?"** Fair question — Locus is the better *app*, and
+> this is a different kind of thing. The honest comparison, including what
+> OSMCycle cannot do, is in
+> **[docs/COMPARISON_LOCUS.md](docs/COMPARISON_LOCUS.md)**. Short version: Locus
+> reads our `alpen_z15.mbtiles` natively, so you can navigate with Locus on our
+> cartography and still let OSMCycle publish your rides.
+
 ---
 
 ## Get the map without rendering it yourself
