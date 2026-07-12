@@ -271,6 +271,7 @@ and why the lookup is bilinear.
 | `scripts/seed.sh` | pre-render a bbox |
 | `scripts/pack_mbtiles.py` / `pack_alpen.py` | pack bbox(es) → offline `.mbtiles` |
 | `scripts/mbtiles2osmand.py` | convert `.mbtiles` → OsmAnd `.sqlitedb` |
+| `scripts/export_layers.py` | export the overlays as GPX for foreign map apps (iOS, Locus, …) |
 
 ## Server bring-up (Ubuntu 26.04 / Mapnik 4.2)
 
@@ -349,6 +350,48 @@ server's IPv6 / a DNS AAAA name for mobile use).
 
 Served transparently at `/tiles/wanderwege/`; usable as an OsmAnd overlay or via
 the app's layer menu.
+
+## On iPhone — and in any other map app
+
+There is no iOS app, and there probably never will be: Apple has no sideloading,
+so the QR-code-and-tap route above cannot exist there. But **you do not need our
+app to use any of this on an iPhone.**
+
+**The map:** both [Guru Maps](https://gurumaps.app/) and
+[Cartograph Maps 3](https://apps.apple.com/us/app/cartograph-maps-3/id1588186796)
+read **MBTiles natively** on iOS. Put `alpen_z15.mbtiles` into iCloud Drive, open
+it in the Files app, "Copy to" the map app — and you have our CyclOSM cartography,
+contour lines and hillshade included, fully offline.
+
+**The layers:** these do *not* come with the map. A raster pack carries the base
+map and nothing else; every overlay in OSMCycle is drawn by the app from its own
+data. So they are published separately, as plain **GPX** — the one format every
+map app reads, and each file lands as its own collection that can be switched on
+and off, which is exactly what our layer menu does:
+
+| Layer | File | Contents |
+|---|---|---|
+| Summit names | [`gipfel.gpx`](https://heissa.de/web1/layers/gipfel.gpx) | 34 114 named summits |
+| Mobile masts (BNetzA) | [`sendemasten.gpx`](https://heissa.de/web1/layers/sendemasten.gpx) | 13 980 sites |
+| Bathing waters (LGL) | [`badestellen.gpx`](https://heissa.de/web1/layers/badestellen.gpx) | 373 |
+| Groundwater wells (GKD) | [`grundwasser.gpx`](https://heissa.de/web1/layers/grundwasser.gpx) | 428 |
+| Karnischer Höhenweg | [`wanderweg_karnischer.gpx`](https://heissa.de/web1/layers/wanderweg_karnischer.gpx) | track |
+| Maximiliansweg | [`wanderweg_maximiliansweg.gpx`](https://heissa.de/web1/layers/wanderweg_maximiliansweg.gpx) | track |
+| Tiroler Höhenweg | [`wanderweg_tiroler_hoehenweg.gpx`](https://heissa.de/web1/layers/wanderweg_tiroler_hoehenweg.gpx) | track |
+
+All of it: <https://heissa.de/web1/layers/> — regenerate with
+`scripts/export_layers.py`. The same files work in Locus, OsmAnd, or anything else
+that imports GPX; they are not iOS-specific.
+
+**Uploading your rides:** the report's upload endpoint is a token-free HTTP POST,
+so an **Apple Shortcut** that picks a `.gpx` and posts it to
+`https://heissa.de/web1/gpx_upload.php` is enough to appear in the
+[public report](https://heissa.de/web1/gpx_report.php) — no app, no account, no
+developer program.
+
+> Caveat, stated plainly: the GPX files are validated as GPX 1.1 and served over
+> HTTPS, but **we have not tested the import on an actual iPhone** — no device
+> here. If a layer misbehaves in Guru or Cartograph, open an issue.
 
 ## Using the maps in OsmAnd
 
