@@ -137,10 +137,17 @@ missing tiles from the server on demand (`hybridsource.py`).
   (fresh fixes, not the stale last-known cache), so a real ride is captured at
   full length instead of collapsing into a stationary blob.
 - **Auto-upload to the online report** — see below; no Syncthing, no PC.
-- **≡ Layer** menu toggles the overlays: the 3 hiking trails (🔴 Karnischer,
-  🔵 Maximiliansweg, 🟢 Tiroler Höhenweg), summit names, mobile masts, bathing
-  waters and groundwater wells — all drawn client-side, offline, viewport-culled.
+- **≡ Layer** menu toggles the overlays: the 3 hiking trails (Karnischer,
+  Maximiliansweg, Tiroler Höhenweg), summit names, mobile masts, bathing waters
+  and groundwater wells — all drawn client-side, offline, viewport-culled. The
+  counts are the real bundled datasets: 13 980 masts, 373 bathing waters, 428
+  groundwater wells.
 - **Everything is a setting**, and every setting lives in one file.
+
+<p align="center">
+  <img src="docs/screenshot_layers.png" alt="OSMCycle layer menu: hiking trails, summit names, masts, bathing waters, groundwater wells" width="300"><br>
+  <i>The ≡ Layer menu — every overlay works offline</i>
+</p>
 
 ### Configuration and remote control
 
