@@ -22,7 +22,26 @@ if (!$url) {
     }
     if ($url) @file_put_contents($cache, $url);
 }
-if (!$url) $url = 'https://tmind.de/maps/apk/osmcycle-v0.9.apk';   // Fallback
+
+// Fallback, wenn GitHub nicht erreichbar ist: die neueste APK aus dem eigenen
+// Spiegel. Bewusst nicht auf eine Version festgenagelt — eine fest verdrahtete
+// Datei veraltet mit jedem Release still und heimlich (stand zuletzt auf v1.5,
+// als v1.7 schon da war).
+if (!$url) {
+    $best = null; $best_v = '0';
+    foreach (glob(__DIR__ . '/apk/osmcycle-v*.apk') as $f) {
+        if (preg_match('/osmcycle-v([\d.]+)\.apk$/i', $f, $m)
+            && version_compare($m[1], $best_v, '>')) {
+            $best_v = $m[1];
+            $best = 'https://heissa.de/web1/apk/' . basename($f);
+        }
+    }
+    $url = $best;
+}
+if (!$url) {                              // weder GitHub noch Spiegel
+    http_response_code(503);
+    exit('No OSMCycle APK available right now.');
+}
 
 header('Location: ' . $url, true, 302);
 echo 'Redirecting to the latest OSMCycle APK: ' . htmlspecialchars($url);

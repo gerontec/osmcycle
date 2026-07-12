@@ -90,24 +90,29 @@ in, and the app uses both:
 
 ### 📲 Download & install the app
 
+One address, always the newest APK — as a link and as a QR code. Both point to
+the same place, so neither ever needs updating when a release goes out:
+
 <p align="center">
-  <img src="docs/osmcycle_apk_qr.png" alt="QR code: download the latest OSMCycle APK" width="220"><br>
-  <b>Point your phone's camera at the QR code → downloads the latest APK</b><br>
-  (Direct link: <a href="https://heissa.de/web1/get_apk.php">heissa.de/web1/get_apk.php</a> —
-  always redirects to the newest release APK)
+  <b>➡ <a href="https://heissa.de/web1/get_apk.php">https://heissa.de/web1/get_apk.php</a></b><br>
+  <br>
+  <img src="docs/osmcycle_apk_qr.png" alt="QR code for https://heissa.de/web1/get_apk.php" width="220"><br>
+  <b>Point your phone's camera at the QR code → downloads the latest APK</b>
 </p>
 
-- **APK (latest):**
+`get_apk.php` looks up the newest GitHub release and redirects to its APK asset.
+If GitHub is unreachable it falls back to the newest APK in its own mirror at
+`heissa.de/web1/apk/`. It caches GitHub's answer for **one hour**, so right after
+a release it may still hand out the previous APK.
+
+- **Alternatively, straight from GitHub:**
   **➡ https://github.com/gerontec/osmcycle/releases/latest** → tap the
-  `osmcycle-vX.apk` asset. Mirror without GitHub:
-  **https://heissa.de/web1/get_apk.php**
+  `osmcycle-vX.apk` asset.
 - **Auto-update:** install [Obtainium](https://github.com/ImranR98/Obtainium) →
   "Add App" → the repo URL above. It picks up every new release.
   The app itself does **not** self-update — that is Obtainium's job alone. For an
   update to be installable at all, every APK must be signed with the same key:
   see [Always sign with the same debug keystore](#️-always-sign-with-the-same-debug-keystore).
-  Note that `get_apk.php` caches GitHub's answer for **one hour**, so right after
-  a release it may still hand out the previous APK.
 
 **Installing without developer mode** (the normal route, no USB/ADB): the first
 time you open the APK, Android asks whether it may "install from this source" →
