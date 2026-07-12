@@ -348,22 +348,25 @@ class OSMCycleApp(App):
         self.center_btn.bind(on_release=self.center_on_me)
         root.add_widget(self.center_btn)
 
-        # Zoom +/- (rechte Kante, mittig) mit aktueller Stufe darunter (max z15)
-        self.zoom_in_btn = Button(text="+", font_size=52, size_hint=(None, None),
-                                  size=(110, 110),
-                                  pos_hint={"right": 0.98, "center_y": 0.64})
+        # Zoom +/- als kompakter Cluster unten rechts, über dem ◎-Button,
+        # aktuelle Stufe darunter (max z15).
+        self.zoom_in_btn = Button(text="+", font_size=40, size_hint=(None, None),
+                                  size=(88, 88),
+                                  pos_hint={"right": 0.98, "y": 0.25})
         self.zoom_in_btn.bind(on_release=lambda b: self._zoom_by(1))
         root.add_widget(self.zoom_in_btn)
-        self.zoom_out_btn = Button(text="−", font_size=52, size_hint=(None, None),
-                                   size=(110, 110),
-                                   pos_hint={"right": 0.98, "center_y": 0.52})
+        self.zoom_out_btn = Button(text="−", font_size=40, size_hint=(None, None),
+                                   size=(88, 88),
+                                   pos_hint={"right": 0.98, "y": 0.155})
         self.zoom_out_btn.bind(on_release=lambda b: self._zoom_by(-1))
         root.add_widget(self.zoom_out_btn)
-        self.zoom_lbl = Label(text=f"z{start_zoom}", size_hint=(None, None),
-                              size=(110, 34),
-                              pos_hint={"right": 0.98, "center_y": 0.44},
-                              color=(0, 0, 0, 1), halign="center", valign="middle",
-                              font_size="22sp", bold=True, text_size=(110, 34))
+        # Zoom-Stufe als Button im gleichen Stil wie +/- (dunkler Grund, weißer
+        # Text rendert zuverlässig — reines Label war auf der E-Ink-Karte
+        # unlesbar). Rein anzeigend, keine Aktion.
+        self.zoom_lbl = Button(text=f"z{start_zoom}", size_hint=(None, None),
+                               size=(88, 48),
+                               pos_hint={"right": 0.98, "y": 0.115},
+                               font_size="24sp", bold=True)
         root.add_widget(self.zoom_lbl)
         self.mapview.bind(zoom=self._on_zoom_changed)
 
@@ -394,7 +397,7 @@ class OSMCycleApp(App):
         mv.zoom = max(lo, min(hi, int(round(mv.zoom)) + delta))
 
     def _on_zoom_changed(self, mapview, zoom):
-        self.zoom_lbl.text = f"z{int(zoom)}"
+        self.zoom_lbl.text = f"z{int(round(zoom))}"
 
     # --- Update-Check ------------------------------------------------------
     def _app_version(self):
