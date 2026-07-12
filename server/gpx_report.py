@@ -294,6 +294,20 @@ def parse_gpx(filepath, elev_data):
     if coords[-1] != last:
         coords.append(last)
 
+    # Hoehenprofil ueber den GANZEN Track (nicht nur den Aufstieg wie coords):
+    # kumulative Distanz + Hoehe, dazu lat/lon, damit der Hover im Profil einen
+    # Marker an der passenden Stelle der Karte setzen kann.
+    prof_step = max(1, len(points) // 400)
+    profile = []
+    cum = 0.0
+    for i, p in enumerate(points):
+        if i:
+            cum += haversine(points[i - 1]['lat'], points[i - 1]['lon'],
+                             p['lat'], p['lon'])
+        if (i % prof_step == 0 or i == len(points) - 1) and p['ele'] is not None:
+            profile.append([round(cum, 3), round(p['ele']),
+                            round(p['lat'], 6), round(p['lon'], 6)])
+
     # Optionaler Uploader-Name: Suffix "__name" im Dateinamen (Upload-Seite)
     by = name.split('__')[-1].replace('_', ' ').strip() if '__' in name else None
 
@@ -314,6 +328,7 @@ def parse_gpx(filepath, elev_data):
         'hmh':         hmh,
         'hmh_down':    hmh_down,
         'coords':      coords,
+        'profile':     profile,
     }
 
 
@@ -342,6 +357,7 @@ def write_report(tracks):
             'hmh':       round(t['hmh'], 1)      if t['hmh']      is not None else None,
             'hmh_down':  round(t['hmh_down'], 1) if t['hmh_down'] is not None else None,
             'coords':    t['coords'],
+            'profile':   t['profile'],
         })
 
     now        = datetime.now().strftime('%d.%m.%Y %H:%M')
@@ -415,14 +431,31 @@ function fmt_dur($h)  {{
     .stat-block:last-child {{ border-right:none; }}
     .card-track {{ cursor:pointer; transition:box-shadow .15s; }}
     .card-track:hover {{ box-shadow:0 4px 12px rgba(0,0,0,.2) !important; }}
-    #leaflet-map {{ height:60vh; min-height:300px; }}
+    #leaflet-map {{ height:52vh; min-height:280px; }}
+    #overview-map {{ height:45vh; min-height:260px; border-radius:.4rem; }}
     .map-hint {{ font-size:.75em; color:#888; }}
+    .track-stats {{ font-size:.85em; color:#555; }}
+    /* Hoehenprofil unter der Karte */
+    #profile-wrap {{ position:relative; border-top:1px solid #dee2e6; background:#fafbfc; }}
+    #profile {{ display:block; width:100%; height:170px; cursor:crosshair; }}
+    #profile-tip {{
+      position:absolute; display:none; pointer-events:none; white-space:nowrap;
+      background:rgba(33,37,41,.92); color:#fff; font-size:.78em;
+      padding:3px 8px; border-radius:6px; transform:translate(-50%, -130%);
+    }}
   </style>
 </head>
 <body>
 <?php
   $track_map_data = array_values(array_map(function($t) {{
-      return ['date'=>$t['date_str'],'place'=>$t['place'],'coords'=>$t['coords']];
+      return [
+        'date'    => $t['date_str'],
+        'place'   => $t['place'],
+        'coords'  => $t['coords'],
+        'profile' => $t['profile'],
+        'stats'   => fmt_f1($t['dist_km']).' km  &bull;  '.$t['hm_up'].' Hm &#8593;  &bull;  '
+                     .fmt_dur($t['dur_total_h']).'  &bull;  &#8960; '.fmt_f1($t['kmh']).' km/h',
+      ];
   }}, $filtered));
 ?>
 <div class="container py-3">
@@ -430,7 +463,7 @@ function fmt_dur($h)  {{
   <h1 class="mb-1">&#127956; GPX-Auswertung</h1>
   <p class="text-muted small mb-3">
     <?= $total ?> Tracks gesamt &nbsp;&bull;&nbsp;
-    Höhendaten: SRTM3 (Bayern &amp; Tirol) &nbsp;&bull;&nbsp;
+    Höhendaten: Copernicus GLO-30 (30 m) &nbsp;&bull;&nbsp;
     Stand: {now}
   </p>
 
@@ -480,6 +513,19 @@ function fmt_dur($h)  {{
     if ($sel_month) $label .= " &nbsp;&bull;&nbsp; ".$monate[$sel_month];
   ?>
   <p class="text-muted small mb-2"><?= $label ?></p>
+  <?php endif; ?>
+
+  <!-- ═══ ÜBERSICHTSKARTE: alle gefilterten Tracks ═══════════════════════ -->
+  <?php if (count($filtered)): ?>
+  <div class="card shadow-sm mb-3">
+    <div class="card-body p-2">
+      <div id="overview-map"></div>
+    </div>
+  </div>
+  <p class="map-hint mb-3 ms-1">
+    &#128506;&#65039; Alle <?= count($filtered) ?> Tracks &ndash; Linie anklicken f&uuml;r Details
+    &nbsp;&bull;&nbsp; Basiskarte oben rechts umschaltbar
+  </p>
   <?php endif; ?>
 
   <!-- ═══ DESKTOP: Tabelle (ab md) ═══════════════════════════════════════ -->
@@ -591,6 +637,13 @@ function fmt_dur($h)  {{
       </div>
       <div class="modal-body p-0">
         <div id="leaflet-map"></div>
+        <div id="profile-wrap">
+          <svg id="profile"></svg>
+          <div id="profile-tip"></div>
+        </div>
+      </div>
+      <div class="modal-footer py-2 justify-content-start">
+        <span class="track-stats" id="mapModalStats"></span>
       </div>
     </div>
   </div>
@@ -601,53 +654,196 @@ function fmt_dur($h)  {{
 <script>
 const allTracks = <?= json_encode($track_map_data) ?>;
 
-let leafletMap  = null;
-let mapLayers   = [];
-let pendingIdx  = null;
-let cyclosmLayer = null, osmLayer = null, activeBase = null;
-
-// Abdeckung unserer eigenen CyclOSM-Kacheln (Bayern+Tirol+Südtirol+Kärnten).
-// Tracks ausserhalb -> OSM-Standardkarte als Fallback.
+// Abdeckung unserer eigenen CyclOSM-Kacheln (Bayern+Tirol+Südtirol+Kärnten),
+// ausgeliefert von tile.php direkt aus alpen_z15.mbtiles. Tracks ausserhalb
+// bekommen den weltweiten CyclOSM-Server als Basiskarte.
 const COV = {{w: 9.9, s: 46.2, e: 15.1, n: 50.6}};
 
-function baseLayer(useCyclosm) {{
-  if (useCyclosm) {{
-    if (!cyclosmLayer) cyclosmLayer = L.tileLayer(
+const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+
+// Ein Leaflet-Layer gehoert immer genau einer Karte -> pro Karte neu erzeugen.
+function baseLayers() {{
+  return {{
+    'CyclOSM (eigene Kacheln)': L.tileLayer(
       'https://tmind.de/maps/tile.php?z={{z}}&x={{x}}&y={{y}}',
-      {{attribution: '&copy; OpenStreetMap, <a href="https://www.cyclosm.org/">CyclOSM</a>',
-        maxZoom: 14, maxNativeZoom: 14}});
-    return cyclosmLayer;
-  }}
-  if (!osmLayer) osmLayer = L.tileLayer(
-    'https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
-    {{attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      maxZoom: 19}});
-  return osmLayer;
+      {{maxNativeZoom: 15, maxZoom: 18,
+        attribution: OSM_ATTR + ', Kacheln <a href="https://www.cyclosm.org/">CyclOSM</a> (eigener Server)'}}),
+    'CyclOSM (weltweit)': L.tileLayer(
+      'https://{{s}}.tile-cyclosm.openstreetmap.fr/cyclosm/{{z}}/{{x}}/{{y}}.png',
+      {{maxZoom: 20, subdomains: 'abc',
+        attribution: OSM_ATTR + ', Kacheln <a href="https://www.cyclosm.org/">CyclOSM</a>'}}),
+    'OpenStreetMap': L.tileLayer(
+      'https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
+      {{maxZoom: 19, attribution: OSM_ATTR}}),
+    'OpenTopoMap': L.tileLayer(
+      'https://{{s}}.tile.opentopomap.org/{{z}}/{{x}}/{{y}}.png',
+      {{maxZoom: 17, subdomains: 'abc',
+        attribution: 'Kartendaten: ' + OSM_ATTR + ', SRTM &bull; Darstellung: '
+          + '<a href="https://opentopomap.org/">OpenTopoMap</a> (CC-BY-SA)'}}),
+    'Satellit': L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}',
+      {{maxZoom: 19, attribution: 'Luftbild &copy; Esri, Maxar, Earthstar Geographics'}}),
+  }};
 }}
 
 function insideCoverage(coords) {{
   return coords.every(c => c[0] >= COV.s && c[0] <= COV.n && c[1] >= COV.w && c[1] <= COV.e);
 }}
 
+function makeMap(elId, useOwnTiles) {{
+  const bases = baseLayers();
+  const map = L.map(elId, {{
+    layers: [bases[useOwnTiles ? 'CyclOSM (eigene Kacheln)' : 'CyclOSM (weltweit)']]
+  }});
+  L.control.layers(bases, null, {{position: 'topright'}}).addTo(map);
+  L.control.scale({{imperial: false}}).addTo(map);
+  return map;
+}}
+
+function trackLine(t, weight) {{
+  return L.polyline(t.coords, {{color:'#2c6e49', weight: weight, opacity:.85}});
+}}
+
+// ── Uebersichtskarte: alle gefilterten Tracks auf einen Blick ────────────────
+(function initOverview() {{
+  if (!document.getElementById('overview-map') || !allTracks.length) return;
+
+  const map   = makeMap('overview-map', allTracks.every(t => insideCoverage(t.coords)));
+  const lines = allTracks.map(function(t, idx) {{
+    const line = trackLine(t, 3);
+    line.bindTooltip(t.date + ' – ' + t.place, {{sticky: true}});
+    line.on('mouseover', () => line.setStyle({{weight:6, color:'#d63384', opacity:1}}));
+    line.on('mouseout',  () => line.setStyle({{weight:3, color:'#2c6e49', opacity:.85}}));
+    line.on('click',     () => showTrack(idx));
+    return line.addTo(map);
+  }});
+  map.fitBounds(L.featureGroup(lines).getBounds(), {{padding: [20, 20]}});
+}})();
+
+// ── Hoehenprofil ────────────────────────────────────────────────────────────
+// Reines SVG statt einer Chart-Bibliothek: es ist eine Polylinie, dafuer lohnt
+// kein 200-kB-CDN. profile[] = [km, m, lat, lon] ueber den GANZEN Track (die
+// Kartenlinie zeigt nur den Aufstieg), darum haengt der Hover-Marker an lat/lon
+// aus dem Profil und nicht an coords[].
+let profileMarker = null;
+
+function drawProfile(t) {{
+  const wrap = document.getElementById('profile-wrap');
+  const svg  = document.getElementById('profile');
+  const tip  = document.getElementById('profile-tip');
+  const pts  = t.profile || [];
+
+  tip.style.display = 'none';
+  if (profileMarker) {{ profileMarker.remove(); profileMarker = null; }}
+  if (pts.length < 2) {{ wrap.style.display = 'none'; return; }}
+  wrap.style.display = '';
+
+  const W = svg.clientWidth || 900, H = 170;
+  const PL = 52, PR = 14, PT = 12, PB = 24;
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  svg.innerHTML = '';
+
+  const dMax = pts[pts.length - 1][0];
+  let eMin = Infinity, eMax = -Infinity;
+  pts.forEach(p => {{ if (p[1] < eMin) eMin = p[1]; if (p[1] > eMax) eMax = p[1]; }});
+  if (eMax - eMin < 20) eMax = eMin + 20;      // flache Tour: keine Nulldivision
+
+  const X = d => PL + (d / dMax) * (W - PL - PR);
+  const Y = e => H - PB - ((e - eMin) / (eMax - eMin)) * (H - PT - PB);
+
+  const NS = 'http://www.w3.org/2000/svg';
+  function add(name, attrs, text) {{
+    const n = document.createElementNS(NS, name);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (text !== undefined) n.textContent = text;
+    svg.appendChild(n);
+    return n;
+  }}
+
+  for (let i = 0; i <= 2; i++) {{                // 3 Hoehenlinien als Gitter
+    const e = eMin + (eMax - eMin) * i / 2, y = Y(e);
+    add('line', {{x1: PL, y1: y, x2: W - PR, y2: y, stroke: '#dee2e6', 'stroke-width': 1}});
+    add('text', {{x: PL - 8, y: y + 4, 'text-anchor': 'end', 'font-size': 11, fill: '#888'}},
+        Math.round(e) + ' m');
+  }}
+
+  const line = pts.map(p => X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join(' ');
+  add('polygon', {{points: PL + ',' + (H - PB) + ' ' + line + ' '
+                          + X(dMax).toFixed(1) + ',' + (H - PB),
+                   fill: 'rgba(44,110,73,.18)'}});
+  add('polyline', {{points: line, fill: 'none', stroke: '#2c6e49', 'stroke-width': 2,
+                    'stroke-linejoin': 'round'}});
+  add('text', {{x: PL, y: H - 6, 'font-size': 11, fill: '#888'}}, '0 km');
+  add('text', {{x: W - PR, y: H - 6, 'text-anchor': 'end', 'font-size': 11, fill: '#888'}},
+      dMax.toFixed(1).replace('.', ',') + ' km');
+
+  const vline = add('line', {{y1: PT, y2: H - PB, stroke: '#d63384', 'stroke-width': 1,
+                              visibility: 'hidden'}});
+  const dot   = add('circle', {{r: 4.5, fill: '#d63384', stroke: '#fff', 'stroke-width': 1.5,
+                                visibility: 'hidden'}});
+
+  function hover(evt) {{
+    const box = svg.getBoundingClientRect();
+    const cx  = ((evt.touches ? evt.touches[0].clientX : evt.clientX) - box.left)
+                * (W / box.width);
+    const d   = ((cx - PL) / (W - PL - PR)) * dMax;
+
+    let best = 0, bestGap = Infinity;
+    pts.forEach((p, i) => {{
+      const gap = Math.abs(p[0] - d);
+      if (gap < bestGap) {{ bestGap = gap; best = i; }}
+    }});
+    const p = pts[best], x = X(p[0]), y = Y(p[1]);
+
+    vline.setAttribute('x1', x); vline.setAttribute('x2', x);
+    vline.setAttribute('visibility', 'visible');
+    dot.setAttribute('cx', x); dot.setAttribute('cy', y);
+    dot.setAttribute('visibility', 'visible');
+
+    tip.style.display = 'block';
+    tip.style.left = (x / W * box.width) + 'px';
+    tip.style.top  = (y / H * box.height) + 'px';
+    tip.textContent = p[0].toFixed(1).replace('.', ',') + ' km  ·  ' + p[1] + ' m';
+
+    if (leafletMap) {{                       // gleiche Stelle auf der Karte zeigen
+      if (!profileMarker) {{
+        profileMarker = L.circleMarker([p[2], p[3]], {{
+          radius: 8, color: '#fff', weight: 2, fillColor: '#d63384', fillOpacity: 1
+        }}).addTo(leafletMap);
+      }} else {{
+        profileMarker.setLatLng([p[2], p[3]]);
+      }}
+    }}
+  }}
+
+  svg.onmousemove = hover;
+  svg.ontouchmove = hover;
+  svg.onmouseleave = function() {{
+    vline.setAttribute('visibility', 'hidden');
+    dot.setAttribute('visibility', 'hidden');
+    tip.style.display = 'none';
+    if (profileMarker) {{ profileMarker.remove(); profileMarker = null; }}
+  }};
+}}
+
+// ── Detailkarte im Modal ─────────────────────────────────────────────────────
+let leafletMap = null;
+let mapLayers  = [];
+let pendingIdx = null;
+
 const mapModalEl = document.getElementById('mapModal');
 
 mapModalEl.addEventListener('shown.bs.modal', function() {{
-  if (!leafletMap) leafletMap = L.map('leaflet-map');
+  if (pendingIdx === null) return;
+  const t = allTracks[pendingIdx];
+
+  if (!leafletMap) leafletMap = makeMap('leaflet-map', insideCoverage(t.coords));
   leafletMap.invalidateSize();
 
-  if (pendingIdx === null) return;
   mapLayers.forEach(l => l.remove());
   mapLayers = [];
 
-  const t    = allTracks[pendingIdx];
-
-  // Basiskarte je Track wählen: eigene CyclOSM innerhalb, sonst OSM-Fallback
-  const base = baseLayer(insideCoverage(t.coords));
-  if (activeBase && activeBase !== base) leafletMap.removeLayer(activeBase);
-  if (!leafletMap.hasLayer(base)) base.addTo(leafletMap);
-  activeBase = base;
-
-  const line = L.polyline(t.coords, {{color:'#2c6e49', weight:4, opacity:.85}});
+  const line = trackLine(t, 4);
   mapLayers.push(line.addTo(leafletMap));
 
   mapLayers.push(
@@ -662,6 +858,7 @@ mapModalEl.addEventListener('shown.bs.modal', function() {{
   );
 
   leafletMap.fitBounds(line.getBounds(), {{padding:[30, 30]}});
+  drawProfile(t);          // erst jetzt: vorher hat das SVG noch keine Breite
   pendingIdx = null;
 }});
 
@@ -669,6 +866,7 @@ function showTrack(idx) {{
   const t = allTracks[idx];
   document.getElementById('mapModalTitle').textContent =
     t.date + '\u2002\u2013\u2002' + t.place;
+  document.getElementById('mapModalStats').innerHTML = t.stats;
   pendingIdx = idx;
   bootstrap.Modal.getOrCreateInstance(mapModalEl).show();
 }}

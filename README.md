@@ -99,6 +99,10 @@ server; the phone only does OpenGL compositing.
 | `server/wanderwege.xml` | Mapnik overlay style for the 3 trails |
 | `server/gpx_report.py` | hourly generator of the public GPX report (Bootstrap+Leaflet) |
 | `server/gpx_upload.php` | public token-free GPX drop endpoint for the app |
+| `server/dem/schema.sql` | DB schema for the elevation model (2 tables, raster blocks) |
+| `server/dem/dem_import.py` | import Copernicus GLO-30 into MariaDB → [docs/ELEVATION.md](docs/ELEVATION.md) |
+| `server/dem/dem_db.py` | `elevation(lat, lon)` — bilinear lookup against the DEM |
+| `server/dem/dem_check.py` | verify the imported DEM against the source GeoTIFFs |
 | `scripts/setup_tileserver.sh` | one-shot server bring-up |
 | `scripts/import_osm.sh` | download + merge + `osm2pgsql` import |
 | `scripts/make_land_shapefile.sh` | landlocked land-polygon substitute |
