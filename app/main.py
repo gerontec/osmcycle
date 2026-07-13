@@ -44,10 +44,10 @@ GITHUB_LATEST = "https://api.github.com/repos/gerontec/osmcycle/releases/latest"
 APK_REDIRECT = "https://heissa.de/web1/get_apk.php"
 # Nur Notnagel: auf Android kommt die Version aus PackageInfo.versionName,
 # das ist die Wahrheit aus buildozer.spec und kann nicht davon abweichen.
-APP_VERSION = "1.7"
+APP_VERSION = "1.8"
 # Wird beim Build gestempelt (build_apk.sh setzt das Datum). Erscheint unten
 # rechts auf der Karte als "vX.Y · JJJJ-MM-TT" statt der (C)-Attribution.
-BUILD_DATE = "2026-07-12"
+BUILD_DATE = "2026-07-13"
 
 # Punkt-Layer, aus wagodb exportiert (siehe scripts/export_points.sh)
 MASTS_NAME = "sendemasten.json"        # EMF-Standorte der BNetzA
@@ -63,6 +63,8 @@ MBTILES_URL = "https://tmind.de/maps/alpen_z15.mbtiles"
 # on https://heissa.de/web1/gpx_report.php. No token, anyone may upload.
 GPX_UPLOAD_URL = "https://heissa.de/web1/gpx_upload.php"
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Private broadcast the recording wake alarm fires at us (see _wake_alarm_arm)
+WAKE_ACTION = "org.gerontec.osmcycle.WAKE"
 
 
 # A live LocationListener: getLastKnownLocation() returns a *stale cached* fix
@@ -1072,6 +1074,139 @@ class OSMCycleApp(App):
         self._set_zoom(self.cfg.get("map.focus_zoom", 15))
         self.mapview.center_on(self.last_lat, self.last_lon)
 
+    # --- wake alarm ------------------------------------------------------
+    # _rec_tick hangs off Kivy's Clock, and that Clock only runs while the CPU
+    # does. Screen off with no wake lock anywhere in the app means the device
+    # suspends and the track simply stops growing -- the 380 s hole in
+    # track_2026-07-09_10-17-10.gpx is exactly that. AllowWhileIdle alarms are
+    # the one thing Android still delivers through Doze, so we re-arm one for
+    # every recording and log a point from it. That does not keep the CPU up
+    # (rec_interval is still best-effort); it bounds how much track a suspend
+    # can swallow.
+    def _wake_alarm_arm(self):
+        """(Re)arm the one-shot safety alarm. Called on record start and again
+        from every firing, because AllowWhileIdle alarms do not repeat."""
+        secs = int(self.cfg.get("gps.wake_interval", 600) or 0)
+        if secs <= 0 or not _HAVE_JNIUS:
+            return
+        try:
+            if getattr(self, "_wake_rx", None) is None:
+                self._wake_rx = self._wake_register_receiver()
+            AlarmManager = autoclass("android.app.AlarmManager")
+            SystemClock = autoclass("android.os.SystemClock")
+            Context = autoclass("android.content.Context")
+            act = autoclass("org.kivy.android.PythonActivity").mActivity
+            am = act.getSystemService(Context.ALARM_SERVICE)
+            at = SystemClock.elapsedRealtime() + secs * 1000
+            pi = self._wake_pending_intent()
+            try:
+                am.setExactAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
+            except Exception:
+                # No exact-alarm permission (it is user-revocable): the inexact
+                # variant needs none and still pierces Doze, it just may fire
+                # late. A late point beats a missing one.
+                am.setAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP, at, pi)
+        except Exception as e:
+            print(f"[wake] arm failed: {e}")
+
+    def _wake_register_receiver(self):
+        """p4a's BroadcastReceiver.start() calls the four-arg registerReceiver().
+        From targetSdk 34 on, Android 14 rejects that for a non-system action
+        like ours with a SecurityException -- the exported flag is mandatory.
+        So build p4a's receiver but register it ourselves, NOT_EXPORTED: nobody
+        outside this app has any business firing our wake alarm."""
+        from android.broadcast import BroadcastReceiver
+        Handler = autoclass("android.os.Handler")
+        Context = autoclass("android.content.Context")
+        VERSION = autoclass("android.os.Build$VERSION")
+        act = autoclass("org.kivy.android.PythonActivity").mActivity
+
+        rx = BroadcastReceiver(self._on_wake_alarm, actions=[WAKE_ACTION])
+        rx.handlerthread.start()
+        rx.handler = Handler(rx.handlerthread.getLooper())
+        if VERSION.SDK_INT >= 33:                 # flag exists only from Tiramisu
+            act.registerReceiver(rx.receiver, rx.receiver_filter, None,
+                                 rx.handler, Context.RECEIVER_NOT_EXPORTED)
+        else:
+            act.registerReceiver(rx.receiver, rx.receiver_filter, None,
+                                 rx.handler)
+        return rx
+
+    def _wake_pending_intent(self):
+        Intent = autoclass("android.content.Intent")
+        PendingIntent = autoclass("android.app.PendingIntent")
+        act = autoclass("org.kivy.android.PythonActivity").mActivity
+        intent = Intent(WAKE_ACTION)
+        intent.setPackage(act.getPackageName())
+        return PendingIntent.getBroadcast(
+            act, 0, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE)
+
+    def _wake_alarm_cancel(self):
+        if not _HAVE_JNIUS:
+            return
+        try:
+            Context = autoclass("android.content.Context")
+            act = autoclass("org.kivy.android.PythonActivity").mActivity
+            act.getSystemService(Context.ALARM_SERVICE).cancel(
+                self._wake_pending_intent())
+        except Exception:
+            pass
+        if getattr(self, "_wake_rx", None) is not None:
+            try:
+                self._wake_rx.stop()
+            except Exception:
+                pass
+            self._wake_rx = None
+        self._wake_unlock()
+
+    def _on_wake_alarm(self, context, intent):
+        """Receiver thread. Android only guarantees the CPU stays up for the
+        duration of onReceive, and we hand the actual work to the Kivy thread —
+        so take our own short lock first, or the device can suspend again
+        before the point is ever written."""
+        self._wake_lock(20000)
+        self._wake_alarm_arm()                    # re-arm before doing any work
+        Clock.schedule_once(self._wake_tick, 0)   # graphics need the main thread
+
+    def _wake_tick(self, dt):
+        try:
+            if self.recorder.recording:
+                self._rec_tick(0)
+        finally:
+            self._wake_unlock()
+
+    def _wake_lock(self, timeout_ms):
+        """Always taken WITH a timeout: if the Kivy thread never gets round to
+        _wake_tick, an untimed lock would pin the CPU awake forever."""
+        if not _HAVE_JNIUS or getattr(self, "_wl", None) is not None:
+            return
+        try:
+            Context = autoclass("android.content.Context")
+            PowerManager = autoclass("android.os.PowerManager")
+            act = autoclass("org.kivy.android.PythonActivity").mActivity
+            pm = act.getSystemService(Context.POWER_SERVICE)
+            wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "osmcycle:wake")
+            wl.setReferenceCounted(False)
+            wl.acquire(timeout_ms)
+            self._wl = wl
+        except Exception as e:
+            print(f"[wake] lock failed: {e}")
+            self._wl = None
+
+    def _wake_unlock(self):
+        wl = getattr(self, "_wl", None)
+        if wl is None:
+            return
+        try:
+            if wl.isHeld():
+                wl.release()
+        except Exception:
+            pass
+        self._wl = None
+
     # --- recording -------------------------------------------------------
     def toggle_record(self, *_):
         if self.rec_btn.state == "down":
@@ -1083,10 +1218,12 @@ class OSMCycleApp(App):
             self._rec_ev = Clock.schedule_interval(
                 self._rec_tick, self.cfg.get("gps.rec_interval", 10))
             self._rec_tick(0)                     # drop the first dot immediately
+            self._wake_alarm_arm()                # bound the damage of a suspend
         else:
             if getattr(self, "_rec_ev", None):
                 self._rec_ev.cancel()
                 self._rec_ev = None
+            self._wake_alarm_cancel()
             path = self.recorder.stop_and_save()
             self.rec_btn.text = "● REC"
             self.status.text = (f"GPX: {os.path.basename(path)}" if path
