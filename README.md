@@ -129,6 +129,12 @@ contour lines) from the **public** folder `/sdcard/maps/tiles/`, and pulls
 missing tiles from the server on demand (`hybridsource.py`).
 
 - CyclOSM base map with **contour lines, hillshade and MTB scale**.
+- **Zoom past the offline pack (z16–18), live.** The pack stops at z15, and so
+  does `tile.php` — it is backed by the very same file. Above that the app
+  fetches from the **public CyclOSM server**, which renders in the identical
+  style, so crossing the boundary is invisible. Everything up to z15 stays
+  offline; only z16+ needs a connection, and without one those tiles simply
+  stay blank.
 - **Position arrow** that rotates to the GPS heading, and a **◎ focus** button
   that centres *and* zooms to the offline map's deepest level (z15) — centred but
   zoomed out is useless on the trail.
@@ -136,6 +142,15 @@ missing tiles from the server on demand (`hybridsource.py`).
   `/sdcard/osmcycle/`. Recording follows a live Android `LocationListener`
   (fresh fixes, not the stale last-known cache), so a real ride is captured at
   full length instead of collapsing into a stationary blob.
+- **A recording survives the phone falling asleep.** Points are logged on Kivy's
+  `Clock`, and that only ticks while the CPU is awake — screen off, the device
+  suspends and the track silently stops growing. (One of our own tracks has a
+  380 s hole from exactly this.) While recording, the app now arms an
+  `AllowWhileIdle` alarm — the one kind Android still delivers through Doze —
+  which wakes the CPU and writes a point. It does **not** hold the CPU up: it
+  bounds how much track a suspend can swallow, to `gps.wake_interval` (600 s by
+  default, `0` disables). Android throttles these alarms to roughly one per
+  9 min per app, so values below ~540 are quietly stretched to that floor.
 - **Auto-upload to the online report** — see below; no Syncthing, no PC.
 - **≡ Layer** menu toggles the overlays: the 3 hiking trails (Karnischer,
   Maximiliansweg, Tiroler Höhenweg), summit names, mobile masts, bathing waters
@@ -162,15 +177,24 @@ adb shell cat /sdcard/osmcycle/config.json
 
 ```json
 {
-  "map":     { "start_lat": 47.68, "start_zoom": 13, "max_zoom": 15,
-               "focus_zoom": 15, "follow": false },
+  "map":     { "start_lat": 47.68, "start_zoom": 13, "max_zoom": 18,
+               "hizoom_from": 16, "focus_zoom": 15, "follow": false },
   "layers":  { "peaks": false, "masts": false, "bathing": false, "gpx": [] },
-  "gps":     { "idle_interval": 60, "rec_interval": 10 },
+  "gps":     { "idle_interval": 60, "rec_interval": 10, "wake_interval": 600 },
   "record":  { "autostart": false },
   "ui":      { "font_size": 11, "bold": false, "panel_opacity": 0.78 },
   "control": { "http_enabled": true, "port": 8765 }
 }
 ```
+
+> **Upgrading from ≤ v1.7:** your existing `config.json` still says
+> `"max_zoom": 15`, and the file wins over the new default — so z16+ stays out of
+> reach until you raise it. New keys you never had (`hizoom_from`,
+> `wake_interval`) do come from the defaults, so those work untouched.
+>
+> ```bash
+> adb shell 'sed -i "s/\"max_zoom\": 15/\"max_zoom\": 18/" /sdcard/osmcycle/config.json'
+> ```
 
 The same state is exposed over a small HTTP API bound to **127.0.0.1** — reachable
 through `adb forward`, never from the network. It exists so the app can be driven
