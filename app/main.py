@@ -44,7 +44,7 @@ GITHUB_LATEST = "https://api.github.com/repos/gerontec/osmcycle/releases/latest"
 APK_REDIRECT = "https://heissa.de/web1/get_apk.php"
 # Nur Notnagel: auf Android kommt die Version aus PackageInfo.versionName,
 # das ist die Wahrheit aus buildozer.spec und kann nicht davon abweichen.
-APP_VERSION = "1.8"
+APP_VERSION = "1.9"
 # Wird beim Build gestempelt (build_apk.sh setzt das Datum). Erscheint unten
 # rechts auf der Karte als "vX.Y · JJJJ-MM-TT" statt der (C)-Attribution.
 BUILD_DATE = "2026-07-13"
@@ -63,6 +63,8 @@ MBTILES_URL = "https://tmind.de/maps/alpen_z15.mbtiles"
 # on https://heissa.de/web1/gpx_report.php. No token, anyone may upload.
 GPX_UPLOAD_URL = "https://heissa.de/web1/gpx_upload.php"
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Locus Map's own offline-map folder. See find_mbtiles() for why we read from it.
+LOCUS_MAPS = "/sdcard/Android/media/menion.android.locus/maps"
 # Private broadcast the recording wake alarm fires at us (see _wake_alarm_arm)
 WAKE_ACTION = "org.gerontec.osmcycle.WAKE"
 
@@ -143,6 +145,12 @@ def find_mbtiles():
             paths.append(os.path.join(ext.getAbsolutePath(), MBTILES_NAME))
     except Exception:
         pass
+    # Locus reads offline maps ONLY from its own folders — Asamm dropped the
+    # "external links" feature, so it cannot be pointed at /sdcard/maps. Its
+    # Android/media folder is the one place both apps can reach: unlike
+    # Android/data it is not sandboxed, and All-files access covers it. Sharing
+    # the file from there beats keeping a second 7 GB copy.
+    paths.append(os.path.join(LOCUS_MAPS, MBTILES_NAME))
     paths += [os.path.join(HERE, MBTILES_NAME), MBTILES_NAME]
     return next((p for p in paths if p and os.path.exists(p)), None)
 

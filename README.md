@@ -435,6 +435,63 @@ Alternatively point OsmAnd at the live server with a tiny online-source
 (base) and `…/tiles/wanderwege/…` (overlay). Enable the **Online maps** plugin,
 then select them under **Configure map → Map source / Overlay map**.
 
+## Using the maps in Locus Map — one file, both apps
+
+Locus reads `.mbtiles` natively, so unlike OsmAnd it needs no conversion: drop
+`alpen_z15.mbtiles` in and it shows up in **Karten-Manager → OFFLINE** as
+*CyclOSM Alpen* (the `name` out of the MBTiles metadata). And it renders it well
+— on both test devices it is a genuinely usable offline map.
+
+The interesting part is that Locus can share the **single** 6.9 GB file with
+OSMCycle, which OsmAnd cannot. It takes one insight, because the obvious routes
+are all dead ends:
+
+* Locus does not declare `MANAGE_EXTERNAL_STORAGE` either, so it cannot read
+  `/sdcard/maps/tiles` — no matter what you put there.
+* It has no setting for an external map directory.
+* Its **Externe Links** feature, which used to reference maps in foreign
+  folders, has been **discontinued** — the app says so in the dialog itself.
+  *Import* is what is left, and import **copies** into Locus's own folder.
+
+So the file has to live in Locus's folder. The trick is *which* one: Locus keeps
+maps in two places, and while `Android/data/…` is sandboxed away from everyone,
+**`Android/media/…` is not**. All-files access covers it (only `Android/data` and
+`Android/obb` are excluded). Put the map there and both apps reach the same
+bytes:
+
+```bash
+adb shell mkdir -p /sdcard/Android/media/menion.android.locus/maps
+adb shell mv /sdcard/maps/tiles/alpen_z15.mbtiles \
+             /sdcard/Android/media/menion.android.locus/maps/
+```
+
+`find_mbtiles()` searches that path (see `LOCUS_MAPS`), so OSMCycle keeps working
+— verified with the network switched off, on an e-ink HiBreak (Android 14) and a
+Poco (Android 12). It needs **All files access**; the app asks for it, or:
+
+```bash
+adb shell appops set org.gerontec.osmcycle MANAGE_EXTERNAL_STORAGE allow
+```
+
+The `mv` is a rename within the same volume and finishes instantly — no 7 GB
+copy, and no second one on disk afterwards.
+
+**The layers** do not travel with the raster pack (it carries the base map and
+nothing else). Export them and open them in Locus:
+
+```bash
+scripts/export_layers.py                 # -> GPX for every overlay
+adb shell am start -a android.intent.action.VIEW \
+  -d "file:///path/to/wanderweg_karnischer.gpx" \
+  -t "application/gpx+xml" menion.android.locus
+```
+
+Each import lands as its own collection that can be switched on and off. Pick the
+target folder in the dialog — the default drops everything into the root, which
+gets unwieldy fast. Worth knowing before you import the masts: OSMCycle draws
+those 13 980 points viewport-culled straight from JSON, while Locus writes every
+one of them into its point database.
+
 ## Design notes / decisions
 
 - **Rendering stack:** `renderd` + Apache `mod_tile` (the canonical OSM stack).
