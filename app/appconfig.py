@@ -40,7 +40,10 @@ DEFAULTS = {
         "start_zoom": 13,        # with an offline map; without one the app
                                  # falls back to the world overview (z3)
         "min_zoom": 2,
-        "max_zoom": 15,          # the offline pack tops out here
+        "max_zoom": 18,          # the offline pack stops at 15; 16+ is pulled
+                                 # live from the public CyclOSM server
+        "hizoom_from": 16,       # first zoom served from CyclOSM instead of
+                                 # tile.php (which is backed by the z15 pack)
         "focus_zoom": 15,        # zoom the (o) focus button jumps to
         "follow": False,         # re-centre on every fix, not just the first
     },

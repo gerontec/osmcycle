@@ -22,10 +22,10 @@ from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.togglebutton import ToggleButton
-from kivy_garden.mapview import MapView, MapSource
+from kivy_garden.mapview import MapView
 
 from appconfig import Config, ControlServer
-from hybridsource import HybridMapSource
+from hybridsource import HybridMapSource, HIZOOM_FROM
 from track import (TrackLayer, TrackRecorder, PositionLayer, GpxLayer,
                    PeaksLayer, PointsLayer, gpx_dir, _writable,
                    COLOR_MASTS, COLOR_BATHING, COLOR_GROUNDWATER)
@@ -260,9 +260,11 @@ class OSMCycleApp(App):
         mbt = find_mbtiles()
         mini = os.path.join(HERE, MINI_NAME)
         lo = self.cfg.get("map.min_zoom", 2)
-        hi = self.cfg.get("map.max_zoom", 15)
+        hi = self.cfg.get("map.max_zoom", 18)
+        hz = self.cfg.get("map.hizoom_from", HIZOOM_FROM)
         if mbt:
             source = HybridMapSource(mbtiles_path=mbt, url=ONLINE_URL,
+                                     hizoom_from=hz,
                                      cache_key="cyclosm", min_zoom=lo, max_zoom=hi,
                                      tile_size=256, image_ext="png",
                                      attribution="")
@@ -271,13 +273,18 @@ class OSMCycleApp(App):
             # nur Kontinente) sofort offline zeigen; z6+ kommt online dazu, bis
             # der grosse Download fertig ist und _download_done umschaltet.
             source = HybridMapSource(mbtiles_path=mini, url=ONLINE_URL,
+                                     hizoom_from=hz,
                                      cache_key="cyclosm", min_zoom=0, max_zoom=hi,
                                      tile_size=256, image_ext="png",
                                      attribution="")
         else:
-            source = MapSource(url=ONLINE_URL, cache_key="cyclosm", min_zoom=lo,
-                               max_zoom=hi, tile_size=256, image_ext="png",
-                               attribution="")
+            # Gar keine Offline-Karte: trotzdem die Hybrid-Quelle, sonst gaebe
+            # es oberhalb von z15 nur 404s von tile.php.
+            source = HybridMapSource(mbtiles_path=None, url=ONLINE_URL,
+                                     hizoom_from=hz,
+                                     cache_key="cyclosm", min_zoom=lo, max_zoom=hi,
+                                     tile_size=256, image_ext="png",
+                                     attribution="")
 
         root = FloatLayout()
         # Mit Detailkarte direkt in die Alpen. Ohne (nur Mini-Weltkarte) auf
@@ -797,8 +804,10 @@ class OSMCycleApp(App):
         self.dl_lbl.text = ""
         self.mapview.map_source = HybridMapSource(
             mbtiles_path=dest, url=ONLINE_URL, cache_key="cyclosm",
-            min_zoom=2, max_zoom=15, tile_size=256, image_ext="png",
-            attribution="")
+            hizoom_from=self.cfg.get("map.hizoom_from", HIZOOM_FROM),
+            min_zoom=self.cfg.get("map.min_zoom", 2),
+            max_zoom=self.cfg.get("map.max_zoom", 18),
+            tile_size=256, image_ext="png", attribution="")
         self.status.text = "Offline-Karte geladen"
 
     def _download_failed(self, msg):
