@@ -40,7 +40,10 @@ DEFAULTS = {
         "start_zoom": 13,        # with an offline map; without one the app
                                  # falls back to the world overview (z3)
         "min_zoom": 2,
-        "max_zoom": 15,          # the offline pack tops out here
+        "max_zoom": 18,          # the offline pack stops at 15; 16+ is pulled
+                                 # live from the public CyclOSM server
+        "hizoom_from": 16,       # first zoom served from CyclOSM instead of
+                                 # tile.php (which is backed by the z15 pack)
         "focus_zoom": 15,        # zoom the (o) focus button jumps to
         "follow": False,         # re-centre on every fix, not just the first
     },
@@ -55,6 +58,14 @@ DEFAULTS = {
     "gps": {
         "idle_interval": 60,     # seconds between fixes while not recording
         "rec_interval": 10,      # seconds between fixes while recording
+        # Safety net while recording: rec_interval rides on Kivy's Clock, which
+        # is dead while the CPU is suspended -- a screen-off ride silently loses
+        # every point until something else wakes the device. This arms an
+        # AllowWhileIdle alarm that fires through Doze and logs a point, so the
+        # worst-case gap in a track is bounded. 0 disables it.
+        # Android throttles these alarms to roughly one per 9 min per app, so
+        # anything below ~540 is quietly stretched to that floor.
+        "wake_interval": 600,    # seconds; hard upper bound on a track's gap
     },
     "record": {
         "autostart": False,      # start recording as soon as the app opens
