@@ -492,6 +492,11 @@ gets unwieldy fast. Worth knowing before you import the masts: OSMCycle draws
 those 13 980 points viewport-culled straight from JSON, while Locus writes every
 one of them into its point database.
 
+Locus can also be driven **without its UI** — track recording, navigation and a
+map overlay that bypasses its database entirely — through an intent API. There is
+no config file (its settings sit in root-only SharedPreferences), so this is the
+only handle there is: [docs/locusAPI.md](docs/locusAPI.md).
+
 ## Design notes / decisions
 
 - **Rendering stack:** `renderd` + Apache `mod_tile` (the canonical OSM stack).
