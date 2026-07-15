@@ -161,6 +161,29 @@ version(=1, int64?)  size(=29)     count(=1)   key(=30)  len  UTF-8 "Test add an
 verwarf die ganze DB. Darum: **schreiben nur über die API**, lesen (`SELECT
 name, latitude, longitude, elevation, parent_id`) ist unbedenklich.
 
+## Verifiziert (2.3-Test, 2026-07-15)
+
+- **Persistenter Import** über `importFileLocus` funktioniert; Locus zeigt seinen
+  Import-Dialog (Zielordner + `IMPORTIEREN`) → **pro Layer ein Tap**, headless
+  nicht möglich.
+- **Dedup-Fix bestätigt:** 1711 Wasserfälle mit eindeutigen Namen importiert,
+  `waypoints` = 1711 (+ Testreste), `items_deleted` unverändert → **kein Merge**.
+- **Koordinaten = Dezimalgrad** (REAL) — per `sqlite3` direkt lesbar.
+- **Ordner „per API" nicht möglich** (bestätigt): `locus-api 0.10.1` hat keine
+  `groups`-Methode, GPX-`<metadata><name>` benennt den Ordner nicht → Punkte im
+  Stammverzeichnis, außer man wählt im Dialog „Neuer Ordner".
+- **Aufräumen:** Testpunkte per Zurückspielen der leeren, von Locus geschriebenen
+  `waypoints.db` (+ Cache-Marker `.count_dbWaypoints`/`.mVisibleItems_dbWaypoints`
+  löschen) entfernt — nie einzelne Zeilen von Hand löschen.
+
+## Skripte
+
+- `scripts/locus_wp_export.py` — `waypoints.db` (per `adb pull`) → GPX.
+  Zeigt die **Lese-Seite** (Dezimalgrad direkt).
+- `scripts/locus_wp_import_gpx.py` — Layer-JSON (`[lat,lon]`/`[lat,lon,name]`) →
+  Locus-import-taugliche GPX (eindeutige Namen + `<metadata><name>`). Die
+  **Prep-Seite**; der Import selbst läuft on-device über `importFileLocus`.
+
 ## Noch fehlende Schritte (TODO)
 2. **Lese-Integration in OSMCycle:** `waypoints.db` per `sqlite3` einlesen,
    Koordinaten dekodieren, in die Overlays einspeisen.

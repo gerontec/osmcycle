@@ -168,6 +168,12 @@ def import_layer(name, points):
     lv = _version()
     if lv is None:
         return False
+    # Locus names the import target folder after the GPX <metadata><name> (no
+    # headless folder API exists in locus-api 0.10.1), so each layer lands in its
+    # own toggleable Locus folder instead of all in the root.
+    folder = {"gipfel": "Gipfelnamen", "wasserfaelle": "Wasserfälle",
+              "badestellen": "Badestellen", "grundwasser": "Grundwasser",
+              "masten": "Sendemasten"}.get(name, name)
     try:
         os.makedirs(LOCUS_SHARE, exist_ok=True)
         path = os.path.join(LOCUS_SHARE, "{}_import.gpx".format(name))
@@ -175,6 +181,8 @@ def import_layer(name, points):
             f.write("<?xml version='1.0' encoding='UTF-8'?>\n"
                     "<gpx version='1.1' creator='osmcycle' "
                     "xmlns='http://www.topografix.com/GPX/1/1'>\n")
+            f.write("  <metadata><name>{}</name></metadata>\n"
+                    .format(html.escape(folder)))
             for i, p in enumerate(points, 1):
                 # Peaks carry a real name; the nameless layers (waterfalls /
                 # bathing are bare coord lists) get a per-point number, else Locus
