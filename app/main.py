@@ -25,10 +25,12 @@ from kivy.uix.togglebutton import ToggleButton
 from kivy_garden.mapview import MapView
 
 from appconfig import Config, ControlServer
+import locusbridge
 from hybridsource import HybridMapSource, HIZOOM_FROM
 from track import (TrackLayer, TrackRecorder, PositionLayer, GpxLayer,
                    PeaksLayer, PointsLayer, gpx_dir, _writable,
-                   COLOR_MASTS, COLOR_BATHING, COLOR_GROUNDWATER)
+                   COLOR_MASTS, COLOR_BATHING, COLOR_GROUNDWATER,
+                   COLOR_WATERFALL)
 
 MBTILES_NAME = "alpen_z15.mbtiles"
 # Mitgelieferte Welt-Uebersicht (nur Kontinente, z0-5, ~1,2 MB). Sofort-Karte,
@@ -44,7 +46,7 @@ GITHUB_LATEST = "https://api.github.com/repos/gerontec/osmcycle/releases/latest"
 APK_REDIRECT = "https://heissa.de/web1/get_apk.php"
 # Nur Notnagel: auf Android kommt die Version aus PackageInfo.versionName,
 # das ist die Wahrheit aus buildozer.spec und kann nicht davon abweichen.
-APP_VERSION = "1.9"
+APP_VERSION = "2.1"
 # Wird beim Build gestempelt (build_apk.sh setzt das Datum). Erscheint unten
 # rechts auf der Karte als "vX.Y · JJJJ-MM-TT" statt der (C)-Attribution.
 BUILD_DATE = "2026-07-13"
@@ -53,6 +55,7 @@ BUILD_DATE = "2026-07-13"
 MASTS_NAME = "sendemasten.json"        # EMF-Standorte der BNetzA
 BATHING_NAME = "badestellen.json"      # LGL-Badegewaesser
 GROUNDWATER_NAME = "grundwasser.json"  # GKD-Grundwassermessstellen
+WATERFALL_NAME = "wasserfaelle.json"   # waterway=waterfall aus OSM (BY/T/ST/K)
 # Public tile server (netcup) — works out of the box for new users, no home
 # server / IPv6 needed. tile.php serves z6-15 straight out of the same
 # alpen_z15.mbtiles that MBTILES_URL hands out.
@@ -108,13 +111,15 @@ except Exception:
 
 
 def map_dir():
-    """Folder for the offline map: PUBLIC, and laid out the way OsmAnd expects
-    its raster maps (<data folder>/tiles/), so pointing OsmAnd's data folder at
-    /sdcard/maps makes it read the very same file — no second 7 GB copy. Kept
-    out of the Syncthing folder (gpx_dir()) on purpose. Falls back to the
-    app-private dir when the public path is not writable (needs 'All files
-    access', see request_all_files_access())."""
-    candidates = ["/sdcard/maps/tiles", "/storage/emulated/0/maps/tiles"]
+    """Folder for the offline map: PUBLIC, so a single copy is shared instead of
+    a second 7 GB one. Prefers Locus's own maps folder — Locus reads offline maps
+    ONLY from there, so downloading straight into it means both apps use one file
+    (osmcycle still finds it via find_mbtiles). _writable() creates the folder if
+    it does not exist yet. Falls back to /sdcard/maps/tiles (same layout OsmAnd
+    expects, <data folder>/tiles/) when the Locus path is not writable. Kept out
+    of the Syncthing folder (gpx_dir()) on purpose; needs 'All files access', see
+    request_all_files_access()."""
+    candidates = [LOCUS_MAPS, "/sdcard/maps/tiles", "/storage/emulated/0/maps/tiles"]
     try:
         from android import mActivity  # type: ignore
         ext = mActivity.getExternalFilesDir(None)
@@ -135,7 +140,11 @@ def mbtiles_target():
 
 
 def find_mbtiles():
-    paths = [os.path.join(map_dir(), MBTILES_NAME)]
+    # map_dir() now prefers LOCUS_MAPS; still read the legacy public dirs so a
+    # pack downloaded there by an earlier version is used instead of re-fetched.
+    paths = [os.path.join(map_dir(), MBTILES_NAME),
+             os.path.join("/sdcard/maps/tiles", MBTILES_NAME),
+             os.path.join("/storage/emulated/0/maps/tiles", MBTILES_NAME)]
     try:
         # Maps downloaded by <=v1.5 still sit in the app-private dir; keep using
         # them instead of pulling the multi-GB pack down again.
@@ -329,6 +338,12 @@ class OSMCycleApp(App):
         self.masts_layer = PointsLayer(
             os.path.join(HERE, MASTS_NAME), COLOR_MASTS, min_zoom=12)
         self.mapview.add_layer(self.masts_layer)
+        # Waterfalls are sparse landmarks (1711 in all four regions), so a higher
+        # per-frame cap than the dense masts is fine; z12 like the masts.
+        self.waterfall_layer = PointsLayer(
+            os.path.join(HERE, WATERFALL_NAME), COLOR_WATERFALL, min_zoom=12,
+            max_points=800, radius=5)
+        self.mapview.add_layer(self.waterfall_layer)
         self.pos_layer = PositionLayer()
         self.mapview.add_layer(self.pos_layer)
 
@@ -403,6 +418,9 @@ class OSMCycleApp(App):
             font_size="12sp", text_size=(360, 24))
         root.add_widget(self.info_lbl)
 
+        # Resolve the Locus classes here, on the Kivy thread: autoclass() from the
+        # HTTP thread hits the system class loader and cannot see the APK.
+        locusbridge.preload()
         self.apply_config()                       # layers etc. from config.json
         # Pick up external edits (adb push / echo) within a couple of seconds,
         # so the app can be reconfigured without ever touching the screen.
@@ -482,6 +500,7 @@ class OSMCycleApp(App):
         self.masts_layer.set_visible(cfg.get("layers.masts", False))
         self.bathing_layer.set_visible(cfg.get("layers.bathing", False))
         self.groundwater_layer.set_visible(cfg.get("layers.groundwater", False))
+        self.waterfall_layer.set_visible(cfg.get("layers.waterfalls", False))
         wanted = set(cfg.get("layers.gpx", []) or [])
         for src in self.gpx_layer.sources():
             self.gpx_layer.set_enabled(src, src in wanted)
@@ -495,6 +514,7 @@ class OSMCycleApp(App):
             "layers.masts": self.masts_layer.visible,
             "layers.bathing": self.bathing_layer.visible,
             "layers.groundwater": self.groundwater_layer.visible,
+            "layers.waterfalls": self.waterfall_layer.visible,
             "layers.gpx": sorted(self.gpx_layer.enabled),
         })
 
@@ -522,6 +542,7 @@ class OSMCycleApp(App):
                        "masts": self.masts_layer.visible,
                        "bathing": self.bathing_layer.visible,
                        "groundwater": self.groundwater_layer.visible,
+                       "waterfalls": self.waterfall_layer.visible,
                        "gpx_enabled": sorted(self.gpx_layer.enabled),
                        "gpx_available": sorted(self.gpx_layer.sources())},
             "gpx_dir": gpx_dir(),
@@ -556,9 +577,44 @@ class OSMCycleApp(App):
             return later(lambda: self._set_recording(True))
         if name == "record_stop":
             return later(lambda: self._set_recording(False))
+        # Not bounced onto the Kivy thread: these touch no widget, only Java, and
+        # 13 980 masts would visibly stall the map if they ran on it. Runs on the
+        # HTTP thread so the caller actually gets a result back.
+        if name in ("locus_send", "locus_remove"):
+            return self._locus_action(name, params.get("layer", "all"))
         return {"ok": False, "error": f"unknown action: {name}",
                 "known": ["focus", "zoom_in", "zoom_out", "set_zoom", "goto",
-                          "record_start", "record_stop"]}
+                          "record_start", "record_stop",
+                          "locus_send", "locus_remove"]}
+
+    def _locus_layers(self):
+        """The very data the ≡ Layer menu draws — Locus gets no second source."""
+        return {
+            "gipfel": self.peaks_layer.peaks,
+            "masten": self.masts_layer.points,
+            "badestellen": self.bathing_layer.points,
+            "grundwasser": self.groundwater_layer.points,
+            "wasserfaelle": self.waterfall_layer.points,
+        }
+
+    def _locus_action(self, name, which):
+        if not locusbridge.available():
+            return {"ok": False, "error": "Locus Map ist nicht installiert"}
+        layers = self._locus_layers()
+        wanted = list(layers) if which == "all" else [w.strip() for w in
+                                                      which.split(",")]
+        unknown = [w for w in wanted if w not in layers]
+        if unknown:
+            return {"ok": False, "error": f"unbekannte Layer: {unknown}",
+                    "known": list(layers)}
+        result = {}
+        for w in wanted:
+            if name == "locus_send":
+                result[w] = {"sent": locusbridge.send_layer(w, layers[w]),
+                             "points": len(layers[w])}
+            else:
+                result[w] = {"removed": locusbridge.remove_layer(w)}
+        return {"ok": True, "action": name, "layers": result}
 
     def _set_zoom(self, zoom):
         mv = self.mapview
@@ -872,7 +928,8 @@ class OSMCycleApp(App):
 
         for text, layer in (("\U0001F4F6 Sendemasten", self.masts_layer),
                             ("\U0001F3CA Badestellen", self.bathing_layer),
-                            ("\U0001F4A7 Grundwasserbrunnen", self.groundwater_layer)):
+                            ("\U0001F4A7 Grundwasserbrunnen", self.groundwater_layer),
+                            ("\U0001F4A6 Wasserfälle", self.waterfall_layer)):
             tb = ToggleButton(text=f"{text} ({layer.count()})", size_hint_y=None,
                               height=96, font_size=menu_fs,
                               state="down" if layer.visible else "normal")

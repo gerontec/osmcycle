@@ -31,6 +31,7 @@ POINT_LAYERS = [
     ("sendemasten.json", "sendemasten.gpx", "Mast", "Radio Tower"),
     ("badestellen.json", "badestellen.gpx", "Badestelle", "Swimming Area"),
     ("grundwasser.json", "grundwasser.gpx", "Grundwasser", "Drinking Water"),
+    ("wasserfaelle.json", "wasserfaelle.gpx", "Wasserfall", "Waterfall"),
 ]
 
 # already GPX in the app — the app reads these very files

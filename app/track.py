@@ -42,6 +42,7 @@ COLOR_HIKING = rgba("#FF5020", 0.9)   # OsmAnd ORANGE    – Wanderwege
 COLOR_MASTS = rgba("#D00D0D")         # OsmAnd RED       – Sendemasten
 COLOR_BATHING = rgba("#10C0F0")       # OsmAnd LIGHTBLUE – Badestellen
 COLOR_GROUNDWATER = rgba("#1010A0")   # OsmAnd BLUE      – Grundwasserbrunnen
+COLOR_WATERFALL = rgba("#00A8A8")     # TEAL             – Wasserfaelle (OSM)
 
 
 def _writable(d):

@@ -1,0 +1,7 @@
+<!-- From targetSdk 30 on, Android hides other apps from us unless we name them.
+     Without this, LocusUtils.getActiveVersion() asks the PackageManager, gets
+     filtered, and reports "Locus is not installed" on a phone where it plainly
+     is. Nothing here grants access to Locus — it only makes it visible. -->
+<queries>
+    <package android:name="menion.android.locus" />
+</queries>

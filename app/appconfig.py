@@ -53,6 +53,7 @@ DEFAULTS = {
         "masts": False,
         "bathing": False,
         "groundwater": False,
+        "waterfalls": False,
         "gpx": [],               # names of GPX sources to show (see /state)
     },
     "gps": {
