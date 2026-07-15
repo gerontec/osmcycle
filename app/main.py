@@ -961,6 +961,37 @@ class OSMCycleApp(App):
         self._gps_start()
         # show the arrow immediately from the last known fix (also works indoors)
         self._show_last_known()
+        self._register_screen_receiver()
+
+    def _register_screen_receiver(self):
+        """Bei Bildschirm-an einen GPS-Zwangs-Refresh ausloesen — sonst zeigt die
+        Karte beim Aufwachen die Position vom Einschlafen. Einmalig, no-op ohne
+        jnius."""
+        if not _HAVE_JNIUS or getattr(self, "_screen_rx", None) is not None:
+            return
+        try:
+            from android.broadcast import BroadcastReceiver
+            Handler = autoclass("android.os.Handler")
+            Context = autoclass("android.content.Context")
+            VERSION = autoclass("android.os.Build$VERSION")
+            act = autoclass("org.kivy.android.PythonActivity").mActivity
+            rx = BroadcastReceiver(self._on_screen_on,
+                                   actions=["android.intent.action.SCREEN_ON"])
+            rx.handlerthread.start()
+            rx.handler = Handler(rx.handlerthread.getLooper())
+            if VERSION.SDK_INT >= 33:
+                act.registerReceiver(rx.receiver, rx.receiver_filter, None,
+                                     rx.handler, Context.RECEIVER_NOT_EXPORTED)
+            else:
+                act.registerReceiver(rx.receiver, rx.receiver_filter, None,
+                                     rx.handler)
+            self._screen_rx = rx
+        except Exception as e:
+            print("[screen] receiver failed: {!r}".format(e))
+
+    def _on_screen_on(self, context, intent):
+        # Receiver-Thread -> zurueck auf den Kivy-Thread bouncen.
+        Clock.schedule_once(lambda dt: self._gps_force_refresh(), 0)
 
     def _ensure_loc_listener(self):
         """Register our own LocationListener so recording follows live GPS
@@ -1145,13 +1176,57 @@ class OSMCycleApp(App):
         self.status.text = f"REC · {len(self.recorder.points)} Punkte"
 
     def center_on_me(self, *_):
-        """Fokus-Button: nicht nur zentrieren, sondern gleich auf die hoechste
-        Stufe zoomen (map.focus_zoom, per Default das Maximum der Offline-Karte).
-        Zentriert, aber weit herausgezoomt ist unterwegs nutzlos."""
-        if self.last_lat is None:
+        """Fokus-Button: erzwingt einen FRISCHEN GPS-Fix statt der evtl. veralteten
+        last_lat/last_lon (die sonst den letzten statt des aktuellen Orts zeigt),
+        zentriert darauf und zoomt auf die hoechste Stufe (map.focus_zoom)."""
+        # Sofort auf den frischesten schon vorhandenen Fix zentrieren …
+        fix = self._read_location()
+        if fix and fix[0] is not None:
+            self._update(*fix)
+        if self.last_lat is not None:
+            self._set_zoom(self.cfg.get("map.focus_zoom", 15))
+            self.mapview.center_on(self.last_lat, self.last_lon)
+        else:
+            self.status.text = "warte auf GPS…"
+        # … und zusaetzlich einen brandneuen Einzel-Fix erzwingen, der beim
+        # Eintreffen nachzentriert (last-known kann sekunden- bis minutenalt sein).
+        self._gps_force_refresh()
+
+    def _gps_force_refresh(self):
+        """Android um einen sofortigen Einzel-Standort bitten (Zwangs-Refresh);
+        beim Eintreffen Pfeil + Karte auf die reale Position setzen."""
+        if not _HAVE_JNIUS or getattr(self, "_lm", None) is None:
             return
-        self._set_zoom(self.cfg.get("map.focus_zoom", 15))
-        self.mapview.center_on(self.last_lat, self.last_lon)
+
+        def _on_fresh(location):
+            try:
+                lat, lon = location.getLatitude(), location.getLongitude()
+                ele = location.getAltitude() if location.hasAltitude() else None
+                brg = location.getBearing() if location.hasBearing() else None
+                t = location.getTime()
+            except Exception:
+                return
+
+            def _apply(_dt):
+                self._live_fix = (lat, lon, ele, brg, t)
+                self._update(lat, lon, ele, brg)
+                self.mapview.center_on(lat, lon)
+            Clock.schedule_once(_apply, 0)
+
+        try:
+            Looper = autoclass("android.os.Looper")
+            # Referenz halten, sonst sammelt der GC den pyjnius-Proxy vor dem
+            # Callback ein.
+            self._fresh_listener = _LocationListener(_on_fresh)
+            for prov in ("gps", "network"):
+                try:
+                    self._lm.requestSingleUpdate(prov, self._fresh_listener,
+                                                 Looper.getMainLooper())
+                    break
+                except Exception:
+                    continue
+        except Exception as e:
+            print("[gps] force refresh failed: {!r}".format(e))
 
     # --- wake alarm ------------------------------------------------------
     # _rec_tick hangs off Kivy's Clock, and that Clock only runs while the CPU
