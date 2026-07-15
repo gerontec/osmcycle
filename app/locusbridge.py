@@ -175,8 +175,13 @@ def import_layer(name, points):
             f.write("<?xml version='1.0' encoding='UTF-8'?>\n"
                     "<gpx version='1.1' creator='osmcycle' "
                     "xmlns='http://www.topografix.com/GPX/1/1'>\n")
-            for p in points:
-                label = html.escape(str(p[2]) if len(p) > 2 else name)
+            for i, p in enumerate(points, 1):
+                # Peaks carry a real name; the nameless layers (waterfalls /
+                # bathing are bare coord lists) get a per-point number, else Locus
+                # MERGES all identical-named points into one on import (1711 in ->
+                # 1710 to items_deleted, 1 left). The number keeps them distinct.
+                label = html.escape(str(p[2]) if len(p) > 2
+                                    else "{} {}".format(name, i))
                 f.write("  <wpt lat='{:.6f}' lon='{:.6f}'><name>{}</name>"
                         "</wpt>\n".format(float(p[0]), float(p[1]), label))
             f.write("</gpx>\n")

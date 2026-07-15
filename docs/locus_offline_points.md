@@ -107,13 +107,61 @@ Nur **Wasserfälle, Gipfel, Badestellen** (klein genug). **Nicht** Sendemasten
 (~14 000) und **nicht** Grundwasser — die würden die Punkt-DB/Karte ausbremsen
 (genau darum nutzt der Bestand für Masten temporäre Packs statt der DB).
 
-## Noch fehlende Schritte (TODO)
+## Wichtige Erkenntnisse aus dem ersten echten Import (2026-07-15)
 
-1. **Koordinaten-Encoding bestätigen (E6 vs E7).** `longitude`/`latitude` sind
-   INTEGER; unklar ob ×10⁶ oder ×10⁷. Klären, indem nach einem echten
-   `importFileLocus`-Lauf eine bekannte Gipfelzeile zurückgelesen und
-   `int / grad` gerechnet wird. (Der Direkt-Schreibtest korrumpierte vorher, daher
-   noch offen.)
+- **Koordinaten-Encoding: KEIN E6/E7.** Locus speichert `longitude`/`latitude`
+  als **Dezimalgrad direkt** (z. B. `9.16346`, `47.76863`) — die Spalten sind
+  zwar `INTEGER` deklariert, aber SQLite ist dynamisch typisiert und Locus legt
+  REAL ab. → OSMCycle liest sie einfach als Float, keine Umrechnung.
+- **Locus merged beim Import gleichnamige Punkte.** Erster Import der 1711
+  Wasserfälle: `sqlite_sequence` = 1711 eingefügt, aber `items_deleted` = 1710,
+  `waypoints` = **1** übrig. Ursache: die namelosen Layer (`wasserfaelle`,
+  `badestellen`) sind reine Koordinatenlisten (`PointsLayer.points = [(lat,lon)]`)
+  → alle bekamen denselben Namen → Locus fasst sie zu einem zusammen. **Fix:**
+  jedem namelosen Punkt einen eindeutigen Namen geben (`"{name} {i}"`); Gipfel
+  haben ohnehin echte Namen. (umgesetzt in `import_layer`.)
+
+## Waypoint-Anatomie (forensisch, echte Locus-Zeilen)
+
+Zwei von Locus **selbst** geschriebene Zeilen untersucht (2026-07-15): eine per
+`importFileLocus`, eine über „Punkt speichern" in der Locus-UI.
+
+Pflicht-/Kernfelder eines gültigen Punkts:
+
+| Spalte | Beispiel | Anmerkung |
+|---|---|---|
+| `name` | `Geierstein (1491 m)` / `2026-07-15 19:15:18` | UI-Punkte auto-benannt mit Zeitstempel |
+| `name_testing` | = `name` | such-normalisierte Kopie, **von Locus gefüllt** |
+| `latitude` / `longitude` | `47.67849956101252` / `11.630453804090534` | **Dezimalgrad, REAL** (Spalte ist `INTEGER`, aber SQLite dynamisch typisiert) — kein E6/E7 |
+| `time_created` / `time` | `1784135754886` | Epoch-**Millisekunden** |
+| `privacy` | `PRIVATE` | String, Pflicht |
+| `uuid` | `BYTE[16] = dc4a6609…0b7b` | 16-Byte-Binär-UUID, **Pflicht** |
+| `parent_id` | `1` | Locus' **Default-Ordner** (dafür gibt es KEINE `groups`-Zeile; benannte Ordner bekommen erst beim Anlegen eine) |
+
+Optionale/leere Felder:
+
+- `extra_icon`, `extra_style`: bei Import **und** manuellem Punkt `NULL` →
+  **Symbol/Farbe kommt vom Ordner** (`groups.icon`/`groups.extra_style`), nicht
+  pro Punkt (außer man wählt explizit ein Icon).
+- `elevation`: nur gesetzt, wenn die GPX `<ele>` hatte (Gipfel ja, Wasserfälle
+  nein).
+- `track_id`, `rw_mode`, `speed`, `bearing`, `accuracy`, `extra_gc*`: `NULL`.
+
+`extra_data` — Beschreibung/Attribute als **serialisierter Blob**
+(Locus `GeoDataExtra`), length-prefixed. Beispiel (Beschreibung
+„Test add and save"):
+
+```
+01 0000000000000000  1d000000      01000000    1e000000  11   54657374…7361766)
+version(=1, int64?)  size(=29)     count(=1)   key(=30)  len  UTF-8 "Test add and save"
+```
+
+**Konsequenz fürs Direkt-Schreiben:** genau `uuid` + `name_testing` + `privacy`
+(und passende Cache-Marker) fehlten → Locus meldete „Problem mit Daten" und
+verwarf die ganze DB. Darum: **schreiben nur über die API**, lesen (`SELECT
+name, latitude, longitude, elevation, parent_id`) ist unbedenklich.
+
+## Noch fehlende Schritte (TODO)
 2. **Lese-Integration in OSMCycle:** `waypoints.db` per `sqlite3` einlesen,
    Koordinaten dekodieren, in die Overlays einspeisen.
 3. **Einmaliger Auto-Import beim ersten Start:** in `main.py` per Config-Flag
