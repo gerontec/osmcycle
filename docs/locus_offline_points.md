@@ -101,6 +101,17 @@ OSMCycle ist Python **mit `sqlite3`** → kann `waypoints.db` direkt lesen
 Damit wird die von Locus geschriebene DB zur **geteilten** Punkt-Quelle für beide
 Apps. Schreiben bleibt Locus vorbehalten.
 
+## OSMCycles eigene Punkt-DB (`app/pointsdb.py`)
+
+OSMCycle führt eine **eigene** DB `osmcycle_points.db` (in `gpx_dir()`,
+öffentlich) im **Locus-Format** (`groups` + `waypoints`, Dezimalgrad, 16-Byte-
+`uuid`) — ein geteiltes Format für beide Apps. Sie wird beim ersten Start im
+Hintergrund aus den geladenen Layern gebaut (`pointsdb.build`), ein
+`groups`-Eintrag pro Layer; namelose Punkte werden nummeriert. Weil OSMCycle
+diese Datei selbst besitzt, darf es sie lesen **und** schreiben — im Gegensatz
+zu Locus' `waypoints.db` (nur über die API schreiben). Die
+`scripts/locus_wp_*`-Tools laufen unverändert auch auf `osmcycle_points.db`.
+
 ## Umfang
 
 Nur **Wasserfälle, Gipfel, Badestellen** (klein genug). **Nicht** Sendemasten

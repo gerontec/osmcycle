@@ -345,6 +345,24 @@ class OSMCycleApp(App):
         self.pos_layer = PositionLayer()
         self.mapview.add_layer(self.pos_layer)
 
+        # OSMCycles eigene Punkt-DB im Locus-Format (groups + waypoints, Dezimal-
+        # grad) — ein geteiltes Format fuer beide Apps. Einmalig im Hintergrund
+        # aus den geladenen Layern aufbauen. Siehe app/pointsdb.py und
+        # docs/locus_offline_points.md.
+        try:
+            import pointsdb
+            self.points_db = os.path.join(gpx_dir(), pointsdb.DB_NAME)
+            if not os.path.exists(self.points_db):
+                threading.Thread(target=pointsdb.build, args=(self.points_db, {
+                    "gipfel": self.peaks_big_layer.peaks,
+                    "wasserfaelle": self.waterfall_layer.points,
+                    "badestellen": self.bathing_layer.points,
+                    "grundwasser": self.groundwater_layer.points,
+                    "masten": self.masts_layer.points,
+                }), daemon=True).start()
+        except Exception as e:
+            print("[pointsdb] build skipped: {!r}".format(e))
+
         self.recorder = TrackRecorder()
         self.last_lat = self.last_lon = self.last_ele = None
         self._centered = False
