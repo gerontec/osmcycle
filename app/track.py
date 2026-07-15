@@ -134,7 +134,9 @@ class PositionLayer(MapLayer):
             Color(0.13, 0.59, 0.95, 1)
             PushMatrix()
             Rotate(angle=-self.heading, origin=(x, y))   # 0 = north = up
-            Triangle(points=[x, y + 18, x - 11, y - 12, x + 11, y - 12])
+            # Doppelte Groesse (Spitze +36 / Basis +-22, -24) -> gut sichtbarer
+            # Richtungspfeil; die Spitze zeigt zur Heading.
+            Triangle(points=[x, y + 36, x - 22, y - 24, x + 22, y - 24])
             PopMatrix()
 
 

@@ -320,12 +320,10 @@ class OSMCycleApp(App):
         seed_gpx()
         self.gpx_layer = GpxLayer([gpx_dir()])
         self.mapview.add_layer(self.gpx_layer)
-        self.peaks_layer = PeaksLayer([gpx_dir()])
-        self.mapview.add_layer(self.peaks_layer)
-        # Gleiche Gipfel, 20 % groessere Schrift (Sehschwaeche). Teilt sich die
-        # geparsten Punkte mit dem Standard-Layer, statt die GPX erneut zu lesen.
-        self.peaks_big_layer = PeaksLayer([], font_size=PeaksLayer.FONT_SIZE * 1.2)
-        self.peaks_big_layer.peaks = self.peaks_layer.peaks
+        # Gipfelnamen in groesserer Schrift (Sehschwaeche) — der einzige
+        # Gipfel-Layer; liest die GPX-Waypoints selbst.
+        self.peaks_big_layer = PeaksLayer([gpx_dir()],
+                                          font_size=PeaksLayer.FONT_SIZE * 1.2)
         self.mapview.add_layer(self.peaks_big_layer)
         # Punkt-Layer: Grundwasser zuerst, damit die selteneren Badestellen und
         # die Masten darueber liegen und nicht verdeckt werden.
@@ -495,8 +493,10 @@ class OSMCycleApp(App):
             lbl.font_size = f"{font_size}sp"
             lbl.bold = cfg.get("ui.bold", False)
 
-        self.peaks_layer.set_visible(cfg.get("layers.peaks", False))
-        self.peaks_big_layer.set_visible(cfg.get("layers.peaks_big", False))
+        # peaks_big ist jetzt der einzige Gipfel-Layer; alte "klein"-Einstellung
+        # (layers.peaks) uebernehmen, damit sie nicht stumm verlorengeht.
+        self.peaks_big_layer.set_visible(
+            cfg.get("layers.peaks_big", False) or cfg.get("layers.peaks", False))
         self.masts_layer.set_visible(cfg.get("layers.masts", False))
         self.bathing_layer.set_visible(cfg.get("layers.bathing", False))
         self.groundwater_layer.set_visible(cfg.get("layers.groundwater", False))
@@ -509,7 +509,6 @@ class OSMCycleApp(App):
         """Write the current overlay state back, so the file always mirrors what
         is on screen — otherwise a UI toggle would be undone by the next reload."""
         self.cfg.update({
-            "layers.peaks": self.peaks_layer.visible,
             "layers.peaks_big": self.peaks_big_layer.visible,
             "layers.masts": self.masts_layer.visible,
             "layers.bathing": self.bathing_layer.visible,
@@ -537,8 +536,7 @@ class OSMCycleApp(App):
                                    if mbt else None)},
             "recording": {"active": self.recorder.recording,
                           "points": len(self.recorder.points)},
-            "layers": {"peaks": self.peaks_layer.visible,
-                       "peaks_big": self.peaks_big_layer.visible,
+            "layers": {"peaks_big": self.peaks_big_layer.visible,
                        "masts": self.masts_layer.visible,
                        "bathing": self.bathing_layer.visible,
                        "groundwater": self.groundwater_layer.visible,
@@ -577,20 +575,24 @@ class OSMCycleApp(App):
             return later(lambda: self._set_recording(True))
         if name == "record_stop":
             return later(lambda: self._set_recording(False))
+        if name == "download_map":
+            # Start/resume the offline pack download. _start_download() no-ops
+            # when one is already running and resumes from the .part otherwise.
+            return later(lambda: self._start_download(blocking=False))
         # Not bounced onto the Kivy thread: these touch no widget, only Java, and
         # 13 980 masts would visibly stall the map if they ran on it. Runs on the
         # HTTP thread so the caller actually gets a result back.
-        if name in ("locus_send", "locus_remove"):
+        if name in ("locus_send", "locus_remove", "locus_import"):
             return self._locus_action(name, params.get("layer", "all"))
         return {"ok": False, "error": f"unknown action: {name}",
                 "known": ["focus", "zoom_in", "zoom_out", "set_zoom", "goto",
-                          "record_start", "record_stop",
-                          "locus_send", "locus_remove"]}
+                          "record_start", "record_stop", "download_map",
+                          "locus_send", "locus_remove", "locus_import"]}
 
     def _locus_layers(self):
         """The very data the ≡ Layer menu draws — Locus gets no second source."""
         return {
-            "gipfel": self.peaks_layer.peaks,
+            "gipfel": self.peaks_big_layer.peaks,
             "masten": self.masts_layer.points,
             "badestellen": self.bathing_layer.points,
             "grundwasser": self.groundwater_layer.points,
@@ -611,6 +613,10 @@ class OSMCycleApp(App):
         for w in wanted:
             if name == "locus_send":
                 result[w] = {"sent": locusbridge.send_layer(w, layers[w]),
+                             "points": len(layers[w])}
+            elif name == "locus_import":
+                # Persist into Locus's own DB (offline, survives restarts).
+                result[w] = {"imported": locusbridge.import_layer(w, layers[w]),
                              "points": len(layers[w])}
             else:
                 result[w] = {"removed": locusbridge.remove_layer(w)}
@@ -896,34 +902,15 @@ class OSMCycleApp(App):
                     self.gpx_layer.set_enabled(s, b.state == "down"),
                     self._store_layers()))
             box.add_widget(tb)
-        pk = ToggleButton(text="\U0001F53A Gipfelnamen", size_hint_y=None, height=96,
-                          font_size=menu_fs,
-                          state="down" if self.peaks_layer.visible else "normal")
-        box.add_widget(pk)
-        pk_big = ToggleButton(text="\U0001F53A Gipfelnamen groß", size_hint_y=None,
+        pk_big = ToggleButton(text="\U0001F53A Gipfelnamen", size_hint_y=None,
                               height=96, font_size=menu_fs,
                               state="down" if self.peaks_big_layer.visible else "normal")
         box.add_widget(pk_big)
 
-        # Beide Gipfel-Layer zeigen dieselben Namen; gleichzeitig aktiv wuerden
-        # sie uebereinander zeichnen -> der eine schaltet den anderen ab.
-        def _peaks(_b):
-            on = pk.state == "down"
-            self.peaks_layer.set_visible(on)
-            if on and pk_big.state == "down":
-                pk_big.state = "normal"
-                self.peaks_big_layer.set_visible(False)
-            self._store_layers()
-
         def _peaks_big(_b):
-            on = pk_big.state == "down"
-            self.peaks_big_layer.set_visible(on)
-            if on and pk.state == "down":
-                pk.state = "normal"
-                self.peaks_layer.set_visible(False)
+            self.peaks_big_layer.set_visible(pk_big.state == "down")
             self._store_layers()
 
-        pk.bind(on_release=_peaks)
         pk_big.bind(on_release=_peaks_big)
 
         for text, layer in (("\U0001F4F6 Sendemasten", self.masts_layer),

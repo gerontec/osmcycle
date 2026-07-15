@@ -36,7 +36,7 @@ try:
 except Exception:
     _HAVE_JNIUS = False
 
-__all__ = ["available", "send_layer", "remove_layer", "LOCUS_PKG"]
+__all__ = ["available", "send_layer", "remove_layer", "import_layer", "LOCUS_PKG"]
 
 LOCUS_PKG = "menion.android.locus"
 # Not app-private: Locus reads the pack file straight off this path.
@@ -62,6 +62,7 @@ _CLASSES = {
     "LocusVersion": "locus.api.android.objects.LocusVersion",
     "Point": "locus.api.objects.geoData.Point",
     "Location": "locus.api.objects.extra.Location",
+    "ActionFiles": "locus.api.android.ActionFiles",
     "ArrayList": "java.util.ArrayList",
     "File": "java.io.File",
     "Uri": "android.net.Uri",
@@ -113,6 +114,14 @@ def send_layer(name, points, center=False):
     if lv is None:
         return False
     try:
+        # Overwrite, never merge: sendPacksFileSilent ADDS the pack's points to
+        # whatever Locus already shows under this name, so a second send stacks a
+        # duplicate of every peak (tap a flag -> the name twice). Drop the old
+        # pack first, then send exactly one.
+        try:
+            _J["ActionDisplayPoints"].INSTANCE.removePackFromLocus(_ctx(), name)
+        except Exception:
+            pass
         pack = _J["PackPoints"](name)
         Point, Location = _J["Point"], _J["Location"]
         for p in points:
@@ -141,4 +150,45 @@ def remove_layer(name):
         return True
     except Exception as e:
         print("[locus] remove '{}' failed: {!r}".format(name, e))
+        return False
+
+
+def import_layer(name, points):
+    """PERSISTENTLY store `points` in Locus's own point database, so they survive
+    restarts and are there fully offline — unlike send_layer's temporary overlay.
+
+    We never write waypoints.db ourselves: hand-crafted rows miss Locus's required
+    fields (uuid, style) and Locus then rejects the whole DB ("Problem mit Daten").
+    Instead we hand Locus a GPX and let its OWN importer write the DB, via the
+    official ActionFiles.importFileLocus. osmcycle may READ that DB afterwards
+    (plain SELECT is safe); only writing has to go through Locus.
+
+    points: (lat, lon) or (lat, lon, label), as PeaksLayer/PointsLayer hold them."""
+    import html
+    lv = _version()
+    if lv is None:
+        return False
+    try:
+        os.makedirs(LOCUS_SHARE, exist_ok=True)
+        path = os.path.join(LOCUS_SHARE, "{}_import.gpx".format(name))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("<?xml version='1.0' encoding='UTF-8'?>\n"
+                    "<gpx version='1.1' creator='osmcycle' "
+                    "xmlns='http://www.topografix.com/GPX/1/1'>\n")
+            for p in points:
+                label = html.escape(str(p[2]) if len(p) > 2 else name)
+                f.write("  <wpt lat='{:.6f}' lon='{:.6f}'><name>{}</name>"
+                        "</wpt>\n".format(float(p[0]), float(p[1]), label))
+            f.write("</gpx>\n")
+        # importFileLocus builds an ACTION_VIEW intent and startActivity()s it; a
+        # file:// data Uri trips StrictMode's file-uri check (targetSdk>=24). The
+        # GPX sits in Locus's OWN media folder (Locus reads it directly), so we
+        # just relax that one policy rather than wiring up a FileProvider.
+        VmBuilder = autoclass("android.os.StrictMode$VmPolicy$Builder")
+        autoclass("android.os.StrictMode").setVmPolicy(VmBuilder().build())
+        uri = _J["Uri"].fromFile(_J["File"](path))
+        return bool(_J["ActionFiles"].INSTANCE.importFileLocus(
+            _ctx(), uri, "application/gpx+xml", lv, True))
+    except Exception as e:
+        print("[locus] import '{}' failed: {!r}".format(name, e))
         return False
